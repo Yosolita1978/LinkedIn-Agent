@@ -9,6 +9,8 @@ class LinkedInBrowser:
     LINKEDIN_BASE_URL = "https://www.linkedin.com"
     FEED_URL = "https://www.linkedin.com/feed/"
     LOGIN_URL = "https://www.linkedin.com/login"
+    CONNECTIONS_URL = "https://www.linkedin.com/mynetwork/invite-connect/connections/"
+    FOLLOWERS_URL = "https://www.linkedin.com/mynetwork/network-manager/people-follow/followers/"
 
     def __init__(self, cookies_path: Path | None = None):
         self._playwright = None
@@ -75,11 +77,9 @@ class LinkedInBrowser:
         await self._page.goto(self.FEED_URL, wait_until="domcontentloaded")
         current_url = self._page.url
 
-        # If redirected to login page, we're not authenticated
         if "/login" in current_url or "/checkpoint" in current_url:
             return False
 
-        # Check for feed-specific element
         feed_indicator = await self._page.query_selector("div.feed-shared-update-v2")
         return feed_indicator is not None
 
@@ -89,7 +89,6 @@ class LinkedInBrowser:
         Call this once to establish initial session.
         Returns True if login successful and cookies saved.
         """
-        # Must restart in headed mode
         await self.stop()
         await self.start(headless=False)
 
@@ -103,7 +102,7 @@ class LinkedInBrowser:
         print("4. Press Enter here when done...")
         print("=" * 50)
 
-        input()  # Blocks until user presses Enter
+        input()
 
         if await self.is_logged_in():
             await self._save_cookies()
@@ -112,6 +111,119 @@ class LinkedInBrowser:
 
         print("Login verification failed. Please try again.")
         return False
+
+    async def scrape_connections(self) -> list[dict]:
+        """
+        Scrape the connections list page.
+        Returns list of dicts with: name, headline, profile_url
+        """
+        await self._page.goto(self.CONNECTIONS_URL, wait_until="domcontentloaded")
+        await self._page.wait_for_selector('div[data-view-name="connections-list"]', timeout=10000)
+
+        cards = await self._page.query_selector_all('div[data-view-name="connections-list"] > div')
+        connections = []
+
+        for card in cards:
+            connection = await self._extract_connection_card(card)
+            if connection:
+                connections.append(connection)
+
+        return connections
+
+    async def _extract_connection_card(self, card) -> dict | None:
+        """Extract data from a single connection card element."""
+        try:
+            link_el = await card.query_selector('a[data-view-name="connections-profile"]')
+            if not link_el:
+                return None
+
+            profile_url = await link_el.get_attribute("href")
+
+            name_el = await card.query_selector("a.f89e0a9a")
+            name = await name_el.inner_text() if name_el else ""
+
+            headline_el = await card.query_selector("p.d45641c5")
+            headline = await headline_el.inner_text() if headline_el else ""
+
+            return {
+                "name": name.strip(),
+                "headline": headline.strip(),
+                "profile_url": profile_url if profile_url.startswith("http") else f"{self.LINKEDIN_BASE_URL}{profile_url}",
+            }
+        except Exception:
+            return None
+
+    async def scrape_followers(self) -> list[dict]:
+        """
+        Scrape the followers list page.
+        Returns list of dicts with: name, headline, profile_url
+        """
+        await self._page.goto(self.FOLLOWERS_URL, wait_until="domcontentloaded")
+        
+        # Wait for content to load
+        await self._page.wait_for_timeout(2000)
+
+        # Try the same selector pattern as connections first
+        cards = await self._page.query_selector_all('div[data-view-name="connections-list"] > div')
+        
+        # If that doesn't work, try alternative selectors
+        if not cards:
+            cards = await self._page.query_selector_all('div[data-view-name="followers-list"] > div')
+        
+        if not cards:
+            # Fallback: look for profile links and work up
+            cards = await self._page.query_selector_all('a[data-view-name="followers-profile"]')
+            if cards:
+                # Get parent containers
+                new_cards = []
+                for link in cards:
+                    parent = await link.evaluate_handle("el => el.closest('div.f21c1da8')")
+                    if parent:
+                        new_cards.append(parent)
+                cards = new_cards
+
+        followers = []
+        for card in cards:
+            follower = await self._extract_follower_card(card)
+            if follower:
+                followers.append(follower)
+
+        return followers
+
+    async def _extract_follower_card(self, card) -> dict | None:
+        """Extract data from a single follower card element."""
+        try:
+            # Try multiple selector patterns
+            link_el = await card.query_selector('a[data-view-name="followers-profile"]')
+            if not link_el:
+                link_el = await card.query_selector('a[data-view-name="connections-profile"]')
+            if not link_el:
+                link_el = await card.query_selector('a[href*="/in/"]')
+            
+            if not link_el:
+                return None
+
+            profile_url = await link_el.get_attribute("href")
+
+            # Name
+            name_el = await card.query_selector("a.f89e0a9a")
+            if not name_el:
+                name_el = await card.query_selector("span.f89e0a9a")
+            name = await name_el.inner_text() if name_el else ""
+
+            # Headline
+            headline_el = await card.query_selector("p.d45641c5")
+            if not headline_el:
+                headline_el = await card.query_selector("p.f389f326")
+            headline = await headline_el.inner_text() if headline_el else ""
+
+            return {
+                "name": name.strip(),
+                "headline": headline.strip(),
+                "profile_url": profile_url if profile_url.startswith("http") else f"{self.LINKEDIN_BASE_URL}{profile_url}",
+            }
+        except Exception:
+            return None
 
     @property
     def page(self) -> Page:

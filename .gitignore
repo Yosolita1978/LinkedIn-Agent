@@ -29,6 +29,7 @@ Thumbs.db
 claude_node_modules/
 claude.md
 backend/.env.example
+backend/playwright-data
 
 # SQLite
 *.db
