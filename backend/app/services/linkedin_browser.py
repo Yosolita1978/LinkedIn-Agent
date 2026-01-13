@@ -159,28 +159,14 @@ class LinkedInBrowser:
         Returns list of dicts with: name, headline, profile_url
         """
         await self._page.goto(self.FOLLOWERS_URL, wait_until="domcontentloaded")
-        
-        # Wait for content to load
-        await self._page.wait_for_timeout(2000)
 
-        # Try the same selector pattern as connections first
-        cards = await self._page.query_selector_all('div[data-view-name="connections-list"] > div')
-        
-        # If that doesn't work, try alternative selectors
-        if not cards:
-            cards = await self._page.query_selector_all('div[data-view-name="followers-list"] > div')
-        
-        if not cards:
-            # Fallback: look for profile links and work up
-            cards = await self._page.query_selector_all('a[data-view-name="followers-profile"]')
-            if cards:
-                # Get parent containers
-                new_cards = []
-                for link in cards:
-                    parent = await link.evaluate_handle("el => el.closest('div.f21c1da8')")
-                    if parent:
-                        new_cards.append(parent)
-                cards = new_cards
+        # Wait for content to load
+        await self._page.wait_for_timeout(3000)
+
+        # Use the correct selector for follower cards
+        cards = await self._page.query_selector_all(
+            'div[data-view-name="search-entity-result-universal-template"]'
+        )
 
         followers = []
         for card in cards:
@@ -193,33 +179,23 @@ class LinkedInBrowser:
     async def _extract_follower_card(self, card) -> dict | None:
         """Extract data from a single follower card element."""
         try:
-            # Try multiple selector patterns
-            link_el = await card.query_selector('a[data-view-name="followers-profile"]')
-            if not link_el:
-                link_el = await card.query_selector('a[data-view-name="connections-profile"]')
-            if not link_el:
-                link_el = await card.query_selector('a[href*="/in/"]')
-            
+            # Find profile link - the /in/ pattern is stable
+            link_el = await card.query_selector('a[href*="/in/"]')
             if not link_el:
                 return None
 
             profile_url = await link_el.get_attribute("href")
 
-            # Name
-            name_el = await card.query_selector("a.f89e0a9a")
-            if not name_el:
-                name_el = await card.query_selector("span.f89e0a9a")
-            name = await name_el.inner_text() if name_el else ""
+            # Name - get text from the profile link
+            name = (await link_el.inner_text()).strip()
 
-            # Headline
-            headline_el = await card.query_selector("p.d45641c5")
-            if not headline_el:
-                headline_el = await card.query_selector("p.f389f326")
-            headline = await headline_el.inner_text() if headline_el else ""
+            # Headline - use stable class pattern
+            headline_el = await card.query_selector("div.t-14.t-black.t-normal")
+            headline = (await headline_el.inner_text()).strip() if headline_el else ""
 
             return {
-                "name": name.strip(),
-                "headline": headline.strip(),
+                "name": name,
+                "headline": headline,
                 "profile_url": profile_url if profile_url.startswith("http") else f"{self.LINKEDIN_BASE_URL}{profile_url}",
             }
         except Exception:
