@@ -1,6 +1,87 @@
 import json
+import logging
+import asyncio
+import random
+from functools import wraps
 from pathlib import Path
-from playwright.async_api import async_playwright, Browser, BrowserContext, Page
+from playwright.async_api import async_playwright, Browser, BrowserContext, Page, TimeoutError as PlaywrightTimeout
+
+# Configure logging
+logger = logging.getLogger(__name__)
+
+# Common Chrome user agents for rotation
+USER_AGENTS = [
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+]
+
+
+async def random_delay(min_seconds: float = 0.5, max_seconds: float = 2.0) -> None:
+    """Add a random delay to simulate human behavior."""
+    delay = random.uniform(min_seconds, max_seconds)
+    await asyncio.sleep(delay)
+
+
+def random_viewport() -> dict:
+    """Generate a random but realistic viewport size."""
+    # Common screen resolutions with slight variations
+    base_widths = [1280, 1366, 1440, 1536, 1920]
+    base_heights = [720, 768, 800, 864, 900, 1080]
+
+    width = random.choice(base_widths) + random.randint(-20, 20)
+    height = random.choice(base_heights) + random.randint(-20, 20)
+
+    return {"width": width, "height": height}
+
+
+class LinkedInError(Exception):
+    """Base exception for LinkedIn-related errors."""
+    pass
+
+
+class AuthenticationError(LinkedInError):
+    """Raised when authentication fails or session is invalid."""
+    pass
+
+
+class ScrapingError(LinkedInError):
+    """Raised when scraping fails after retries."""
+    pass
+
+
+def async_retry(max_attempts: int = 3, base_delay: float = 1.0, exceptions: tuple = (Exception,)):
+    """
+    Decorator for retrying async functions with exponential backoff.
+
+    Args:
+        max_attempts: Maximum number of retry attempts
+        base_delay: Initial delay between retries (seconds)
+        exceptions: Tuple of exceptions to catch and retry
+    """
+    def decorator(func):
+        @wraps(func)
+        async def wrapper(*args, **kwargs):
+            last_exception = None
+            for attempt in range(1, max_attempts + 1):
+                try:
+                    return await func(*args, **kwargs)
+                except exceptions as e:
+                    last_exception = e
+                    if attempt < max_attempts:
+                        delay = base_delay * (2 ** (attempt - 1)) + random.uniform(0, 1)
+                        logger.warning(
+                            f"{func.__name__} failed (attempt {attempt}/{max_attempts}): {e}. "
+                            f"Retrying in {delay:.1f}s..."
+                        )
+                        await asyncio.sleep(delay)
+                    else:
+                        logger.error(f"{func.__name__} failed after {max_attempts} attempts: {e}")
+            raise last_exception
+        return wrapper
+    return decorator
 
 
 class LinkedInBrowser:
@@ -21,6 +102,7 @@ class LinkedInBrowser:
         if cookies_path is None:
             cookies_path = Path(__file__).parents[2] / "playwright-data" / "cookies.json"
         self._cookies_path = cookies_path
+        logger.debug(f"Initialized LinkedInBrowser with cookies path: {cookies_path}")
 
     async def __aenter__(self) -> "LinkedInBrowser":
         await self.start()
@@ -31,23 +113,33 @@ class LinkedInBrowser:
 
     async def start(self, headless: bool = True) -> None:
         """Start the browser and load cookies if available."""
+        logger.info(f"Starting browser (headless={headless})")
         self._playwright = await async_playwright().start()
         self._browser = await self._playwright.chromium.launch(headless=headless)
+
+        # Anti-detection: random viewport and user agent each session
+        viewport = random_viewport()
+        user_agent = random.choice(USER_AGENTS)
+        logger.debug(f"Using viewport {viewport['width']}x{viewport['height']}, UA: {user_agent[:50]}...")
+
         self._context = await self._browser.new_context(
-            viewport={"width": 1280, "height": 800},
-            user_agent=(
-                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/120.0.0.0 Safari/537.36"
-            ),
+            viewport=viewport,
+            user_agent=user_agent,
+            # Additional anti-detection settings
+            locale="en-US",
+            timezone_id="America/New_York",
         )
         self._page = await self._context.new_page()
 
         if self._cookies_path.exists():
             await self._load_cookies()
+            logger.info("Loaded existing cookies")
+        else:
+            logger.info("No cookies file found, will need to authenticate")
 
     async def stop(self) -> None:
         """Close browser and cleanup resources."""
+        logger.info("Stopping browser")
         if self._context:
             await self._context.close()
             self._context = None
@@ -61,9 +153,14 @@ class LinkedInBrowser:
 
     async def _load_cookies(self) -> None:
         """Load cookies from file into browser context."""
-        with open(self._cookies_path, "r") as f:
-            cookies = json.load(f)
-        await self._context.add_cookies(cookies)
+        try:
+            with open(self._cookies_path, "r") as f:
+                cookies = json.load(f)
+            await self._context.add_cookies(cookies)
+            logger.debug(f"Loaded {len(cookies)} cookies from {self._cookies_path}")
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to parse cookies file: {e}")
+            raise LinkedInError(f"Invalid cookies file: {e}")
 
     async def _save_cookies(self) -> None:
         """Save current cookies to file."""
@@ -71,17 +168,50 @@ class LinkedInBrowser:
         cookies = await self._context.cookies()
         with open(self._cookies_path, "w") as f:
             json.dump(cookies, f, indent=2)
+        logger.info(f"Saved {len(cookies)} cookies to {self._cookies_path}")
+
+    async def _human_scroll(self, scroll_amount: int = 300, steps: int = 3) -> None:
+        """
+        Scroll the page in a human-like way with variable speeds.
+
+        Args:
+            scroll_amount: Total pixels to scroll
+            steps: Number of scroll steps (more = smoother)
+        """
+        step_size = scroll_amount // steps
+        for _ in range(steps):
+            # Random scroll amount per step
+            scroll = step_size + random.randint(-50, 50)
+            await self._page.evaluate(f"window.scrollBy(0, {scroll})")
+            # Random pause between scrolls
+            await random_delay(0.1, 0.4)
+
+    async def _navigate_with_delay(self, url: str, wait_until: str = "domcontentloaded") -> None:
+        """Navigate to a URL with human-like delays before and after."""
+        await random_delay(0.5, 1.5)  # Pre-navigation delay
+        await self._page.goto(url, wait_until=wait_until, timeout=15000)
+        await random_delay(1.0, 2.5)  # Post-navigation delay (reading time)
 
     async def is_logged_in(self) -> bool:
         """Check if we have a valid authenticated session."""
-        await self._page.goto(self.FEED_URL, wait_until="domcontentloaded")
+        logger.debug("Checking login status...")
+        try:
+            await self._navigate_with_delay(self.FEED_URL)
+        except PlaywrightTimeout:
+            logger.warning("Timeout loading feed page")
+            return False
+
         current_url = self._page.url
+        logger.debug(f"Current URL after navigation: {current_url}")
 
         if "/login" in current_url or "/checkpoint" in current_url:
+            logger.info("Not logged in - redirected to login/checkpoint")
             return False
 
         feed_indicator = await self._page.query_selector("div.feed-shared-update-v2")
-        return feed_indicator is not None
+        is_logged = feed_indicator is not None
+        logger.info(f"Login status: {'authenticated' if is_logged else 'not authenticated'}")
+        return is_logged
 
     async def manual_login(self) -> bool:
         """
@@ -89,6 +219,7 @@ class LinkedInBrowser:
         Call this once to establish initial session.
         Returns True if login successful and cookies saved.
         """
+        logger.info("Starting manual login process")
         await self.stop()
         await self.start(headless=False)
 
@@ -106,100 +237,352 @@ class LinkedInBrowser:
 
         if await self.is_logged_in():
             await self._save_cookies()
-            print("Cookies saved successfully!")
+            logger.info("Manual login successful, cookies saved")
             return True
 
-        print("Login verification failed. Please try again.")
+        logger.error("Manual login verification failed")
         return False
 
-    async def scrape_connections(self) -> list[dict]:
+    @async_retry(max_attempts=3, base_delay=2.0, exceptions=(PlaywrightTimeout, ScrapingError))
+    async def scrape_connections(self, max_items: int = 50) -> list[dict]:
         """
-        Scrape the connections list page.
+        Scrape the connections list page with pagination.
+
+        Args:
+            max_items: Maximum number of connections to scrape (default 50)
+
         Returns list of dicts with: name, headline, profile_url
         """
-        await self._page.goto(self.CONNECTIONS_URL, wait_until="domcontentloaded")
-        await self._page.wait_for_selector('div[data-view-name="connections-list"]', timeout=10000)
+        logger.info(f"Starting connections scrape (max {max_items} items)")
 
-        cards = await self._page.query_selector_all('div[data-view-name="connections-list"] > div')
+        # Navigate with human-like delays
+        await self._navigate_with_delay(self.CONNECTIONS_URL)
+
+        try:
+            await self._page.wait_for_selector('div[data-view-name="connections-list"]', timeout=10000)
+        except PlaywrightTimeout:
+            logger.error("Connections list container not found")
+            raise ScrapingError("Could not find connections list on page")
+
         connections = []
+        seen_urls = set()
+        no_new_items_count = 0
+        max_scroll_attempts = 20  # Safety limit
 
-        for card in cards:
-            connection = await self._extract_connection_card(card)
-            if connection:
-                connections.append(connection)
+        for scroll_attempt in range(max_scroll_attempts):
+            # Query all figures currently on page
+            figures = await self._page.query_selector_all('figure[aria-label*="profile picture"]')
+            initial_count = len(connections)
 
+            for figure in figures:
+                if len(connections) >= max_items:
+                    break
+
+                try:
+                    aria_label = await figure.get_attribute('aria-label')
+                    if not aria_label or "profile picture" not in aria_label:
+                        continue
+
+                    # Extract name by removing the "...s profile picture" suffix
+                    idx = aria_label.find("s profile picture")
+                    if idx > 0:
+                        name = aria_label[:idx-1].strip()
+                    else:
+                        name = aria_label.replace("profile picture", "").strip()
+
+                    # Clean up any trailing apostrophes (various unicode apostrophes)
+                    name = name.rstrip("''\u2019")
+
+                    # Find the parent link to get the URL
+                    parent_link = await figure.evaluate('el => el.closest("a")?.href')
+                    if not parent_link or parent_link in seen_urls:
+                        continue
+
+                    seen_urls.add(parent_link)
+
+                    connections.append({
+                        "name": name,
+                        "headline": "",
+                        "profile_url": parent_link,
+                    })
+                except Exception as e:
+                    logger.debug(f"Error extracting from figure: {e}")
+                    continue
+
+            # Check if we've reached our limit
+            if len(connections) >= max_items:
+                logger.info(f"Reached max items limit ({max_items})")
+                break
+
+            # Check if we found new items this scroll
+            new_items = len(connections) - initial_count
+            if new_items == 0:
+                no_new_items_count += 1
+                if no_new_items_count >= 3:
+                    logger.info("No new items found after 3 scroll attempts, stopping")
+                    break
+            else:
+                no_new_items_count = 0
+                logger.debug(f"Found {new_items} new connections (total: {len(connections)})")
+
+            # Scroll to load more
+            await self._human_scroll(800, steps=4)
+            await random_delay(1.5, 3.0)
+
+        logger.info(f"Scraped {len(connections)} connections")
         return connections
 
-    async def _extract_connection_card(self, card) -> dict | None:
-        """Extract data from a single connection card element."""
-        try:
-            link_el = await card.query_selector('a[data-view-name="connections-profile"]')
-            if not link_el:
-                return None
-
-            profile_url = await link_el.get_attribute("href")
-
-            name_el = await card.query_selector("a.f89e0a9a")
-            name = await name_el.inner_text() if name_el else ""
-
-            headline_el = await card.query_selector("p.d45641c5")
-            headline = await headline_el.inner_text() if headline_el else ""
-
-            return {
-                "name": name.strip(),
-                "headline": headline.strip(),
-                "profile_url": profile_url if profile_url.startswith("http") else f"{self.LINKEDIN_BASE_URL}{profile_url}",
-            }
-        except Exception:
-            return None
-
-    async def scrape_followers(self) -> list[dict]:
+    @async_retry(max_attempts=3, base_delay=2.0, exceptions=(PlaywrightTimeout, ScrapingError))
+    async def scrape_followers(self, max_items: int = 50) -> list[dict]:
         """
-        Scrape the followers list page.
+        Scrape the followers list page with pagination.
+
+        Args:
+            max_items: Maximum number of followers to scrape (default 50)
+
         Returns list of dicts with: name, headline, profile_url
         """
-        await self._page.goto(self.FOLLOWERS_URL, wait_until="domcontentloaded")
+        logger.info(f"Starting followers scrape (max {max_items} items)")
 
-        # Wait for content to load
-        await self._page.wait_for_timeout(3000)
-
-        # Use the correct selector for follower cards
-        cards = await self._page.query_selector_all(
-            'div[data-view-name="search-entity-result-universal-template"]'
-        )
+        # Navigate with human-like delays
+        await self._navigate_with_delay(self.FOLLOWERS_URL)
 
         followers = []
-        for card in cards:
-            follower = await self._extract_follower_card(card)
-            if follower:
-                followers.append(follower)
+        seen_urls = set()
+        no_new_items_count = 0
+        max_scroll_attempts = 20  # Safety limit
 
+        for scroll_attempt in range(max_scroll_attempts):
+            # Query all cards currently on page
+            cards = await self._page.query_selector_all(
+                'div[data-view-name="search-entity-result-universal-template"]'
+            )
+            initial_count = len(followers)
+
+            for card in cards:
+                if len(followers) >= max_items:
+                    break
+
+                follower = await self._extract_follower_card(card)
+                if follower and follower["profile_url"] not in seen_urls:
+                    seen_urls.add(follower["profile_url"])
+                    followers.append(follower)
+
+            # Check if we've reached our limit
+            if len(followers) >= max_items:
+                logger.info(f"Reached max items limit ({max_items})")
+                break
+
+            # Check if we found new items this scroll
+            new_items = len(followers) - initial_count
+            if new_items == 0:
+                no_new_items_count += 1
+                if no_new_items_count >= 3:
+                    logger.info("No new items found after 3 scroll attempts, stopping")
+                    break
+            else:
+                no_new_items_count = 0
+                logger.debug(f"Found {new_items} new followers (total: {len(followers)})")
+
+            # Scroll to load more
+            await self._human_scroll(800, steps=4)
+            await random_delay(1.5, 3.0)
+
+        logger.info(f"Scraped {len(followers)} followers")
         return followers
 
     async def _extract_follower_card(self, card) -> dict | None:
         """Extract data from a single follower card element."""
         try:
-            # Find profile link - the /in/ pattern is stable
-            link_el = await card.query_selector('a[href*="/in/"]')
-            if not link_el:
+            # Find ALL profile links - there are usually two: image link and name link
+            link_els = await card.query_selector_all('a[href*="/in/"]')
+            if not link_els:
+                logger.debug("No profile link found in follower card")
                 return None
 
-            profile_url = await link_el.get_attribute("href")
+            profile_url = None
+            name = ""
 
-            # Name - get text from the profile link
-            name = (await link_el.inner_text()).strip()
+            # The second link typically contains just the name text
+            for link_el in link_els:
+                href = await link_el.get_attribute("href")
+                if href and "/in/" in href:
+                    if not profile_url:
+                        profile_url = href
 
-            # Headline - use stable class pattern
-            headline_el = await card.query_selector("div.t-14.t-black.t-normal")
-            headline = (await headline_el.inner_text()).strip() if headline_el else ""
+                    # Get the text content
+                    text = (await link_el.inner_text()).strip()
+
+                    # Skip if it's the image link (contains Status text or is empty)
+                    if text and "Status is" not in text and len(text) > 1:
+                        name = text
+                        break
+
+            # Headline - look for the subtitle/occupation text
+            headline = ""
+            headline_selectors = [
+                'div.t-14.t-black.t-normal',
+                'span.t-14.t-black.t-normal',
+                'div.entity-result__primary-subtitle',
+                'span.entity-result__primary-subtitle',
+                'div.linked-area div.t-14',
+            ]
+            for selector in headline_selectors:
+                headline_el = await card.query_selector(selector)
+                if headline_el:
+                    headline = (await headline_el.inner_text()).strip()
+                    break
+
+            if not profile_url:
+                logger.debug("No profile URL found")
+                return None
+
+            if not name:
+                logger.debug(f"Empty name for profile: {profile_url}")
+                return None
+
+            # Final cleanup - remove "Status is reachable" if it got through
+            if "Status is" in name:
+                logger.debug(f"Name contains status text, skipping: {name}")
+                return None
 
             return {
                 "name": name,
                 "headline": headline,
                 "profile_url": profile_url if profile_url.startswith("http") else f"{self.LINKEDIN_BASE_URL}{profile_url}",
             }
-        except Exception:
+        except Exception as e:
+            logger.debug(f"Error extracting follower card: {e}")
             return None
+
+    @async_retry(max_attempts=2, base_delay=2.0, exceptions=(PlaywrightTimeout, ScrapingError))
+    async def scrape_profile(self, profile_url: str) -> dict | None:
+        """
+        Scrape detailed information from a LinkedIn profile page.
+
+        Args:
+            profile_url: Full URL to the LinkedIn profile
+
+        Returns dict with: name, headline, location, about, company, experience, education
+        """
+        logger.info(f"Scraping profile: {profile_url}")
+
+        # Navigate with human-like delays
+        await self._navigate_with_delay(profile_url)
+
+        # Scroll down to load lazy content
+        for _ in range(3):
+            await self._human_scroll(600, steps=3)
+            await random_delay(0.5, 1.0)
+
+        try:
+            profile = {}
+
+            # Name - usually in h1
+            name_el = await self._page.query_selector('h1.text-heading-xlarge')
+            if name_el:
+                profile["name"] = (await name_el.inner_text()).strip()
+            else:
+                # Fallback selector
+                name_el = await self._page.query_selector('h1')
+                profile["name"] = (await name_el.inner_text()).strip() if name_el else ""
+
+            # Headline - below the name
+            headline_el = await self._page.query_selector('div.text-body-medium.break-words')
+            if headline_el:
+                profile["headline"] = (await headline_el.inner_text()).strip()
+            else:
+                profile["headline"] = ""
+
+            # Location
+            location_el = await self._page.query_selector('span.text-body-small.inline.t-black--light.break-words')
+            if location_el:
+                profile["location"] = (await location_el.inner_text()).strip()
+            else:
+                profile["location"] = ""
+
+            # About section
+            about_section = await self._page.query_selector('section:has(#about) div.display-flex.full-width')
+            if about_section:
+                about_text = await about_section.inner_text()
+                profile["about"] = about_text.strip()[:500]  # Limit length
+            else:
+                profile["about"] = ""
+
+            # Current company - from the intro card
+            company_el = await self._page.query_selector('div.inline-show-more-text--is-collapsed button[aria-label*="Current company"]')
+            if company_el:
+                profile["company"] = (await company_el.inner_text()).strip()
+            else:
+                # Try alternative: first experience entry
+                exp_company = await self._page.query_selector('section:has(#experience) li div.display-flex.flex-column span[aria-hidden="true"]')
+                if exp_company:
+                    profile["company"] = (await exp_company.inner_text()).strip()
+                else:
+                    profile["company"] = ""
+
+            # Experience - get list of positions
+            experience = []
+            exp_items = await self._page.query_selector_all('section:has(#experience) li.artdeco-list__item')
+            for item in exp_items[:5]:  # Limit to 5 most recent
+                try:
+                    title_el = await item.query_selector('div.display-flex.flex-wrap span[aria-hidden="true"]')
+                    company_el = await item.query_selector('span.t-14.t-normal span[aria-hidden="true"]')
+
+                    title = (await title_el.inner_text()).strip() if title_el else ""
+                    company = (await company_el.inner_text()).strip() if company_el else ""
+
+                    if title:
+                        experience.append({"title": title, "company": company})
+                except Exception:
+                    continue
+            profile["experience"] = experience
+
+            # Education - get list of schools
+            education = []
+            edu_items = await self._page.query_selector_all('section:has(#education) li.artdeco-list__item')
+            for item in edu_items[:3]:  # Limit to 3
+                try:
+                    school_el = await item.query_selector('div.display-flex.flex-wrap span[aria-hidden="true"]')
+                    degree_el = await item.query_selector('span.t-14.t-normal span[aria-hidden="true"]')
+
+                    school = (await school_el.inner_text()).strip() if school_el else ""
+                    degree = (await degree_el.inner_text()).strip() if degree_el else ""
+
+                    if school:
+                        education.append({"school": school, "degree": degree})
+                except Exception:
+                    continue
+            profile["education"] = education
+
+            profile["profile_url"] = profile_url
+
+            logger.info(f"Scraped profile: {profile.get('name', 'Unknown')}")
+            return profile
+
+        except Exception as e:
+            logger.error(f"Error scraping profile: {e}")
+            return None
+
+    async def save_debug_snapshot(self, name: str) -> Path:
+        """
+        Save current page HTML and screenshot for debugging.
+        Returns the path to the debug directory.
+        """
+        debug_dir = self._cookies_path.parent
+        debug_dir.mkdir(parents=True, exist_ok=True)
+
+        html_path = debug_dir / f"{name}_debug.html"
+        png_path = debug_dir / f"{name}_debug.png"
+
+        html = await self._page.content()
+        with open(html_path, "w") as f:
+            f.write(html)
+
+        await self._page.screenshot(path=png_path, full_page=True)
+
+        logger.info(f"Saved debug snapshot to {debug_dir}/{name}_debug.*")
+        return debug_dir
 
     @property
     def page(self) -> Page:
