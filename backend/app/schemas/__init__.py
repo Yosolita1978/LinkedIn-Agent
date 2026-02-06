@@ -28,6 +28,9 @@ from app.schemas.queue import (
     OutreachQueueItemCreate,
     OutreachQueueItemUpdate,
     OutreachQueueItemResponse,
+    StatusUpdate,
+    QueueListResponse,
+    QueueStatsResponse,
 )
 from app.schemas.upload import (
     DataUploadResponse,
@@ -61,6 +64,9 @@ __all__ = [
     "OutreachQueueItemCreate",
     "OutreachQueueItemUpdate",
     "OutreachQueueItemResponse",
+    "StatusUpdate",
+    "QueueListResponse",
+    "QueueStatsResponse",
     # Upload
     "DataUploadResponse",
     "UploadStatusResponse",

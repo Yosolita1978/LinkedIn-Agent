@@ -1,17 +1,19 @@
 """
 Message Generator Service
 
-Uses Claude API to generate personalized outreach messages based on:
+Uses OpenAI Agents SDK to generate personalized outreach messages based on:
 - Contact profile and history
 - Segment (MujerTech, Cascadia, Job Search)
 - Resurrection hooks (if any)
 - Outreach purpose
+
+Tracing is enabled automatically — view at https://platform.openai.com/traces
 """
 
 from typing import Optional
 from datetime import datetime
 
-import anthropic
+from agents import Agent, Runner, trace, set_default_openai_key
 from sqlalchemy import select, desc
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -21,15 +23,13 @@ from app.models import Contact, Message, ResurrectionOpportunity
 
 settings = get_settings()
 
-# Initialize Anthropic client
-client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
+# Set OpenAI API key for the Agents SDK
+set_default_openai_key(settings.openai_api_key)
 
-
-# ============================================================================
-# Prompt Templates
-# ============================================================================
-
-SYSTEM_PROMPT = """You are helping write LinkedIn messages for Cristina Rodriguez, a tech professional based in Seattle.
+# Create the message generation agent
+message_agent = Agent(
+    name="LinkedInMessageGenerator",
+    instructions="""You are helping write LinkedIn messages for Cristina Rodriguez, a tech professional based in Seattle.
 
 Your messages should be:
 - Warm and authentic, not salesy or generic
@@ -45,8 +45,14 @@ Never use:
 - Buzzwords or corporate jargon
 - Phrases like "I'd love to pick your brain"
 
-Always write in first person as Cristina."""
+Always write in first person as Cristina.""",
+    model="gpt-4o",
+)
 
+
+# ============================================================================
+# Prompt Templates
+# ============================================================================
 
 SEGMENT_CONTEXTS = {
     "mujertech": """Context: This contact is part of the MujerTech community - women entrepreneurs and tech professionals in Latin America. Cristina runs this community to connect and support Latinas in tech.
@@ -255,18 +261,16 @@ async def generate_message(
 
     user_prompt = "\n".join(prompt_parts)
 
-    # Call Claude API
-    response = client.messages.create(
-        model="claude-sonnet-4-20250514",
-        max_tokens=1024,
-        system=SYSTEM_PROMPT,
-        messages=[
-            {"role": "user", "content": user_prompt}
-        ]
-    )
+    # Run the agent with tracing enabled
+    with trace("LinkedIn message generation"):
+        run_result = await Runner.run(message_agent, user_prompt)
 
     # Parse response
-    raw_response = response.content[0].text
+    raw_response = run_result.final_output
+
+    # Get token usage
+    usage = run_result.context_wrapper.usage
+    tokens_used = usage.total_tokens
 
     # Simple parsing - split by numbered variations
     variations = []
@@ -311,7 +315,7 @@ async def generate_message(
         "purpose": purpose,
         "segment": segment,
         "variations": variations,
-        "tokens_used": response.usage.input_tokens + response.usage.output_tokens,
+        "tokens_used": tokens_used,
     }
 
 

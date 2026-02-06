@@ -4,6 +4,43 @@ All notable changes to this project are documented here.
 
 ---
 
+## [0.4.0] - 2026-02-06
+
+### Phase 4: OpenAI Migration + Queue Management
+
+#### Changed
+
+- **Message Generator — Switched from Anthropic to OpenAI Agents SDK**
+  - Replaced `anthropic` package with `openai-agents`
+  - Using `gpt-4o` model via Agent + Runner pattern
+  - Built-in tracing enabled — view at https://platform.openai.com/traces
+  - Removed `langchain` and `langgraph` dependencies (no longer needed)
+
+#### Added
+
+- **Outreach Queue Management** (`services/queue_service.py`, `routes/queue.py`)
+  - 7 new API endpoints at `/api/queue/`
+  - Status workflow: draft → approved → sent → responded
+  - Duplicate prevention: one active item per contact
+  - Queue statistics endpoint
+  - Message editing for drafts
+  - Delete protection for sent/responded items (kept for history)
+
+- **Queue API Endpoints**
+  - `POST /api/queue/` — Add message to queue as draft
+  - `GET /api/queue/` — List items (filter by status, use_case)
+  - `GET /api/queue/stats` — Queue statistics by status and use_case
+  - `GET /api/queue/{id}` — Get single queue item
+  - `PATCH /api/queue/{id}/status` — Transition status
+  - `PATCH /api/queue/{id}/message` — Edit draft message
+  - `DELETE /api/queue/{id}` — Remove draft/approved item
+
+#### Note
+
+- Queue endpoints will be fully tested via the React frontend (Phase 5)
+
+---
+
 ## [0.3.0] - 2026-02-05
 
 ### Phase 3: Intelligence Engine Complete
@@ -48,7 +85,7 @@ Major milestone - the backend intelligence system is now fully functional.
   - Pattern matching with context extraction
 
 - **Message Generator** (`services/message_generator.py`)
-  - Claude API integration (claude-sonnet-4-20250514)
+  - Claude API integration (migrated to OpenAI in v0.4.0)
   - Segment-aware prompting
   - 7 message purposes (reconnect, introduce, etc.)
   - Multi-variation generation
@@ -139,12 +176,12 @@ Major milestone - the backend intelligence system is now fully functional.
 
 ## Upcoming
 
-### [0.4.0] - Planned: Queue & Workflow
+### [0.4.0] - Feb 6, 2026: OpenAI + Queue (DONE)
 
-- Outreach queue management routes
+- OpenAI Agents SDK migration with Traces
+- Outreach queue management (7 endpoints)
 - Status workflow (draft → approved → sent → responded)
 - Duplicate prevention
-- Daily outreach recommendations
 
 ### [0.5.0] - Planned: Frontend Dashboard
 
@@ -170,6 +207,6 @@ Major milestone - the backend intelligence system is now fully functional.
 | 0.1.0 | Jan 8, 2026 | Initial setup |
 | 0.2.0 | Jan 27, 2026 | Playwright scraper |
 | 0.3.0 | Feb 5, 2026 | Intelligence engine |
-| 0.4.0 | TBD | Queue & workflow |
+| 0.4.0 | Feb 6, 2026 | OpenAI + Queue workflow |
 | 0.5.0 | TBD | Frontend dashboard |
 | 0.6.0 | TBD | Advanced features |

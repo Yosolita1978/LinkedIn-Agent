@@ -2,12 +2,22 @@ from datetime import datetime
 from typing import Optional
 from uuid import UUID
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+
+
+VALID_STATUSES = ["draft", "approved", "sent", "responded"]
+VALID_USE_CASES = ["mujertech", "cascadia", "job_search"]
+VALID_OUTREACH_TYPES = ["resurrection", "warm", "cold"]
+VALID_PURPOSES = [
+    "reconnect", "introduce", "follow_up", "invite_community",
+    "ask_advice", "congratulate", "share_resource",
+]
 
 
 class OutreachQueueItemBase(BaseModel):
     use_case: str  # 'mujertech', 'cascadia', 'job_search'
     outreach_type: str  # 'resurrection', 'warm', 'cold'
+    purpose: str = "reconnect"
     generated_message: Optional[str] = None
 
 
@@ -16,8 +26,11 @@ class OutreachQueueItemCreate(OutreachQueueItemBase):
 
 
 class OutreachQueueItemUpdate(BaseModel):
-    status: Optional[str] = None  # 'queued', 'sent', 'replied'
     generated_message: Optional[str] = None
+
+
+class StatusUpdate(BaseModel):
+    status: str = Field(description="New status: draft, approved, sent, responded")
 
 
 class OutreachQueueItemResponse(BaseModel):
@@ -25,9 +38,11 @@ class OutreachQueueItemResponse(BaseModel):
     contact_id: UUID
     use_case: str
     outreach_type: str
+    purpose: str
     generated_message: Optional[str] = None
     status: str
     created_at: datetime
+    approved_at: Optional[datetime] = None
     sent_at: Optional[datetime] = None
     replied_at: Optional[datetime] = None
 
@@ -43,3 +58,9 @@ class OutreachQueueItemWithContact(OutreachQueueItemResponse):
 class QueueListResponse(BaseModel):
     items: list[OutreachQueueItemWithContact]
     total: int
+
+
+class QueueStatsResponse(BaseModel):
+    total: int
+    by_status: dict[str, int]
+    by_use_case: dict[str, int]

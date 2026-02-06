@@ -26,15 +26,19 @@ class OutreachQueueItem(Base):
     outreach_type: Mapped[str] = mapped_column(
         Text, nullable=False
     )  # 'resurrection', 'warm', 'cold'
+    purpose: Mapped[str] = mapped_column(
+        Text, nullable=False, default="reconnect"
+    )  # 'reconnect', 'introduce', 'follow_up', etc.
     generated_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
-    # Status tracking
+    # Status workflow: draft → approved → sent → responded
     status: Mapped[str] = mapped_column(
-        Text, default="queued"
-    )  # 'queued', 'sent', 'replied'
+        Text, default="draft"
+    )
 
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    approved_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     sent_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     replied_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
@@ -44,4 +48,4 @@ class OutreachQueueItem(Base):
     )
 
     def __repr__(self) -> str:
-        return f"<OutreachQueueItem {self.use_case}/{self.outreach_type} - {self.status}>"
+        return f"<OutreachQueueItem {self.use_case}/{self.purpose} - {self.status}>"

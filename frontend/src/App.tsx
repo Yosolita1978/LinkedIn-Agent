@@ -1,28 +1,25 @@
-import { useEffect, useState } from 'react'
+import { BrowserRouter, Routes, Route } from "react-router-dom";
+import Layout from "./components/Layout";
+import DashboardPage from "./pages/DashboardPage";
+import ContactsPage from "./pages/ContactsPage";
+import ContactDetailPage from "./pages/ContactDetailPage";
+import QueuePage from "./pages/QueuePage";
+import OpportunitiesPage from "./pages/OpportunitiesPage";
 
 function App() {
-  const [apiStatus, setApiStatus] = useState<string>('Checking...')
-
-  useEffect(() => {
-    fetch('http://127.0.0.1:8000/health')
-      .then(res => res.json())
-      .then(data => setApiStatus(`API: ${data.status} (${data.env})`))
-      .catch(() => setApiStatus('API: Not connected'))
-  }, [])
-
   return (
-    <div className="min-h-screen bg-gray-100 flex items-center justify-center">
-      <div className="bg-white p-8 rounded-lg shadow-md text-center">
-        <h1 className="text-2xl font-bold text-gray-800 mb-4">
-          LinkedIn Outreach Agent
-        </h1>
-        <p className="text-gray-600 mb-2">MujerTech</p>
-        <p className={`text-sm ${apiStatus.includes('healthy') ? 'text-green-600' : 'text-red-600'}`}>
-          {apiStatus}
-        </p>
-      </div>
-    </div>
-  )
+    <BrowserRouter>
+      <Routes>
+        <Route element={<Layout />}>
+          <Route path="/" element={<DashboardPage />} />
+          <Route path="/contacts" element={<ContactsPage />} />
+          <Route path="/contacts/:id" element={<ContactDetailPage />} />
+          <Route path="/queue" element={<QueuePage />} />
+          <Route path="/opportunities" element={<OpportunitiesPage />} />
+        </Route>
+      </Routes>
+    </BrowserRouter>
+  );
 }
 
-export default App
+export default App;

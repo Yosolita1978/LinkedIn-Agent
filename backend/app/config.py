@@ -10,8 +10,8 @@ class Settings(BaseSettings):
     # Supabase Database
     database_url: str = ""
     
-    # Anthropic
-    anthropic_api_key: str = ""
+    # OpenAI
+    openai_api_key: str = ""
     
     # LinkedIn
     linkedin_email: str = ""

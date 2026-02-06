@@ -209,11 +209,12 @@ From your LinkedIn export:
 
 ## What's Remaining
 
-### Phase 1: Queue Management (Backend)
-- [ ] Queue routes for tracking message status
-- [ ] Save generated messages to queue
-- [ ] Status workflow: draft → approved → sent → responded
-- [ ] Prevent duplicate outreach
+### Phase 1: Queue Management (Backend) — DONE
+- [x] Queue routes for tracking message status (7 endpoints at `/api/queue/`)
+- [x] Save generated messages to queue (as drafts)
+- [x] Status workflow: draft → approved → sent → responded
+- [x] Prevent duplicate outreach (one active item per contact)
+- [ ] **Testing with frontend** — will be validated when the React dashboard is built
 
 ### Phase 2: Contact Ranking
 - [ ] Combined ranking algorithm (warmth + segment + opportunity)
@@ -255,7 +256,7 @@ uv run uvicorn app.main:app --reload
 ```bash
 # backend/.env
 DATABASE_URL=postgresql://...your-supabase-url...
-ANTHROPIC_API_KEY=sk-ant-...your-key...
+OPENAI_API_KEY=sk-...your-openai-key...
 APP_ENV=development
 ```
 
@@ -302,7 +303,7 @@ curl -X POST http://localhost:8000/api/generate/message \
 │         ┌────────────────────┼────────────────────┐         │
 │         ▼                    ▼                    ▼         │
 │  ┌─────────────┐     ┌─────────────┐     ┌─────────────┐   │
-│  │   Warmth    │     │Resurrection │     │  Claude AI  │   │
+│  │   Warmth    │     │Resurrection │     │  OpenAI     │   │
 │  │   Scorer    │     │   Scanner   │     │  Generator  │   │
 │  └─────────────┘     └─────────────┘     └─────────────┘   │
 │         │                    │                    │         │
@@ -310,7 +311,7 @@ curl -X POST http://localhost:8000/api/generate/message \
 │                              ▼                               │
 │                       ┌─────────────┐                       │
 │                       │ FastAPI API │                       │
-│                       │ (6 routers) │                       │
+│                       │ (7 routers) │                       │
 │                       └─────────────┘                       │
 │                              │                               │
 │                              ▼                               │
@@ -326,6 +327,6 @@ curl -X POST http://localhost:8000/api/generate/message \
 
 ## Next Session Priorities
 
-1. **Queue Management** - Complete the outreach workflow
-2. **Frontend** - Build the React dashboard
-3. **Testing** - Test message generation with real contacts
+1. **Contact Ranking** - Combined ranking algorithm + daily recommendations
+2. **Frontend Dashboard** - Build the React UI (contacts, warmth, queue, generation)
+3. **Testing** - End-to-end testing of queue workflow via frontend

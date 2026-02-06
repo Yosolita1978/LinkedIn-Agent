@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import get_settings
 from app.database import init_db
-from app.routes import upload_router, contacts_router, target_companies_router, resurrection_router, generate_router
+from app.routes import upload_router, contacts_router, target_companies_router, resurrection_router, generate_router, queue_router
 
 # Import models so SQLAlchemy knows about them before creating tables
 from app.models import (
@@ -38,7 +38,7 @@ app = FastAPI(
 # CORS for frontend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -50,6 +50,7 @@ app.include_router(contacts_router)
 app.include_router(target_companies_router)
 app.include_router(resurrection_router)
 app.include_router(generate_router)
+app.include_router(queue_router)
 
 
 @app.get("/")
