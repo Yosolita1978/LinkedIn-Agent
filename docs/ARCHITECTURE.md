@@ -1,184 +1,255 @@
 # Architecture
 
-This document describes the system architecture of the LinkedIn Outreach Agent.
+This document describes the system architecture of the LinkedIn Intelligence & Outreach Agent.
 
 ## System Overview
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                        LinkedIn Outreach Agent                   │
-├─────────────────────────────────────────────────────────────────┤
-│                                                                  │
-│  ┌──────────────┐     ┌──────────────┐     ┌──────────────┐    │
-│  │   Frontend   │────▶│   Backend    │────▶│   LinkedIn   │    │
-│  │   (React)    │     │  (FastAPI)   │     │  (Playwright)│    │
-│  └──────────────┘     └──────────────┘     └──────────────┘    │
-│         │                    │                    │             │
-│         │                    ▼                    │             │
-│         │            ┌──────────────┐             │             │
-│         │            │   Database   │             │             │
-│         │            │  (Supabase)  │             │             │
-│         │            └──────────────┘             │             │
-│         │                    │                    │             │
-│         │                    ▼                    │             │
-│         │            ┌──────────────┐             │             │
-│         └───────────▶│   Claude AI  │◀────────────┘             │
-│                      │  (Anthropic) │                           │
-│                      └──────────────┘                           │
-│                                                                  │
-└─────────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────┐
+│                LinkedIn Intelligence & Outreach Agent        │
+├─────────────────────────────────────────────────────────────┤
+│                                                              │
+│  LinkedIn Export (CSV)                                       │
+│         │                                                    │
+│         ▼                                                    │
+│  ┌──────────────┐     ┌──────────────┐     ┌─────────────┐  │
+│  │ Export Parser│────▶│   Supabase   │◀────│  Segmenter  │  │
+│  └──────────────┘     │  PostgreSQL  │     └─────────────┘  │
+│                       └──────────────┘                       │
+│                              │                               │
+│         ┌────────────────────┼────────────────────┐         │
+│         ▼                    ▼                    ▼         │
+│  ┌─────────────┐     ┌─────────────┐     ┌─────────────┐   │
+│  │   Warmth    │     │Resurrection │     │  Claude AI  │   │
+│  │   Scorer    │     │   Scanner   │     │  Generator  │   │
+│  └─────────────┘     └─────────────┘     └─────────────┘   │
+│         │                    │                    │         │
+│         └────────────────────┼────────────────────┘         │
+│                              ▼                               │
+│                       ┌─────────────┐                       │
+│                       │ FastAPI API │                       │
+│                       └─────────────┘                       │
+│                              │                               │
+│                              ▼                               │
+│                       ┌─────────────┐                       │
+│                       │  Frontend   │                       │
+│                       │   (React)   │                       │
+│                       └─────────────┘                       │
+│                                                              │
+└─────────────────────────────────────────────────────────────┘
 ```
+
+---
 
 ## Components
 
-### 1. Frontend (React + TypeScript)
-
-**Location**: `/frontend/`
-
-**Purpose**: User interface for managing outreach campaigns.
-
-**Status**: Basic setup, not yet functional.
-
-**Key Files**:
-- `src/App.tsx` - Main application component
-- `src/main.tsx` - React entry point
-- `vite.config.ts` - Vite configuration
-
-**Future Features**:
-- Dashboard showing connections/followers
-- Campaign management UI
-- Message template editor
-- Analytics and reporting
-
----
-
-### 2. Backend (FastAPI)
+### 1. Backend (FastAPI + SQLAlchemy Async)
 
 **Location**: `/backend/app/`
 
-**Purpose**: API server and business logic.
+**Status**: Core functionality complete.
 
-**Status**: Basic setup with health check endpoint.
+#### Services
 
-**Key Files**:
-- `main.py` - FastAPI application with CORS
-- `config.py` - Environment configuration (Pydantic Settings)
+| Service | File | Purpose |
+|---------|------|---------|
+| Export Parser | `services/export_parser.py` | Parse LinkedIn CSV exports |
+| Warmth Scorer | `services/warmth_scorer.py` | Calculate relationship warmth (0-100) |
+| Segmenter | `services/segmenter.py` | Auto-tag contacts into audience segments |
+| Resurrection Scanner | `services/resurrection_scanner.py` | Detect outreach opportunities |
+| Message Generator | `services/message_generator.py` | Generate messages via Claude API |
+| LinkedIn Browser | `services/linkedin_browser.py` | Playwright scraper (optional) |
 
-**Current Endpoints**:
-```
-GET /        - Root endpoint
-GET /health  - Health check
-```
+#### API Routes
 
-**Future Endpoints**:
-```
-GET  /connections     - List scraped connections
-GET  /followers       - List scraped followers
-GET  /profiles/{id}   - Get profile details
-POST /campaigns       - Create outreach campaign
-POST /messages        - Generate AI message
-```
-
----
-
-### 3. LinkedIn Browser (Playwright)
-
-**Location**: `/backend/app/services/linkedin_browser.py`
-
-**Purpose**: Browser automation for LinkedIn scraping.
-
-**Status**: Fully functional.
-
-**Class**: `LinkedInBrowser`
-
-#### Key Methods
-
-| Method | Purpose |
-|--------|---------|
-| `start()` | Launch browser with anti-detection settings |
-| `stop()` | Close browser and cleanup |
-| `is_logged_in()` | Check if session is valid |
-| `manual_login()` | Interactive login flow |
-| `scrape_connections(max_items)` | Scrape connection list |
-| `scrape_followers(max_items)` | Scrape follower list |
-| `scrape_profile(url)` | Scrape individual profile |
-
-#### Anti-Detection Features
-
-1. **User Agent Rotation**: Random selection from 5 Chrome user agents
-2. **Viewport Randomization**: Varies screen size each session
-3. **Random Delays**: Variable wait times between actions
-4. **Human-like Scrolling**: Scroll in steps with random pauses
-5. **Locale/Timezone**: Set to common US values
-
-#### Data Flow
-
-```
-1. Start browser with random fingerprint
-2. Load saved cookies (if exist)
-3. Navigate to target page
-4. Wait for content + random delay
-5. Scroll to load lazy content
-6. Extract data from DOM
-7. Return structured data
-```
+| Router | Prefix | Purpose |
+|--------|--------|---------|
+| upload | `/api/upload` | CSV file uploads |
+| contacts | `/api/contacts` | Contact CRUD + filtering |
+| target_companies | `/api/target-companies` | Job search targets |
+| resurrection | `/api/resurrection` | Opportunity detection |
+| generate | `/api/generate` | Message generation |
 
 ---
 
-### 4. Database (Supabase)
+### 2. Database (Supabase PostgreSQL)
 
-**Status**: Configured but not implemented.
+**Status**: 6 tables implemented.
 
-**Future Schema**:
+#### Schema
 
 ```sql
--- Contacts table
+-- Core contact data
 contacts (
   id UUID PRIMARY KEY,
   linkedin_url TEXT UNIQUE,
-  name TEXT,
+  name TEXT NOT NULL,
   headline TEXT,
   location TEXT,
   company TEXT,
-  scraped_at TIMESTAMP
+  position TEXT,
+  about TEXT,
+  email TEXT,
+  experience JSONB,
+  education JSONB,
+  connection_date DATE,
+  scraped_at TIMESTAMP,
+
+  -- Warmth scoring
+  warmth_score INTEGER DEFAULT 0,
+  warmth_breakdown JSONB,
+  warmth_calculated_at TIMESTAMP,
+
+  -- Segmentation
+  segment_tags TEXT[],
+  manual_tags TEXT[],
+
+  -- Message stats
+  total_messages INTEGER DEFAULT 0,
+  last_message_date DATE,
+  last_message_direction TEXT,
+
+  created_at TIMESTAMP,
+  updated_at TIMESTAMP
 )
 
--- Campaigns table
-campaigns (
+-- Message history
+messages (
   id UUID PRIMARY KEY,
-  name TEXT,
-  template TEXT,
-  status TEXT,
+  contact_id UUID REFERENCES contacts,
+  direction TEXT NOT NULL,  -- 'sent' or 'received'
+  date TIMESTAMP NOT NULL,
+  subject TEXT,
+  content TEXT,
+  content_length INTEGER,
+  is_substantive BOOLEAN,
+  conversation_id TEXT,
   created_at TIMESTAMP
 )
 
--- Messages table
-messages (
+-- Outreach opportunities
+resurrection_opportunities (
   id UUID PRIMARY KEY,
-  campaign_id UUID REFERENCES campaigns,
   contact_id UUID REFERENCES contacts,
-  content TEXT,
-  status TEXT,
+  hook_type TEXT NOT NULL,  -- dormant, promise_made, question_unanswered, they_waiting
+  hook_detail TEXT,
+  source_message_id UUID REFERENCES messages,
+  detected_at TIMESTAMP,
+  is_active BOOLEAN DEFAULT TRUE,
+  UNIQUE(contact_id, hook_type)
+)
+
+-- Job search targets
+target_companies (
+  id UUID PRIMARY KEY,
+  name TEXT UNIQUE NOT NULL,
+  notes TEXT,
+  created_at TIMESTAMP
+)
+
+-- Message queue
+outreach_queue_items (
+  id UUID PRIMARY KEY,
+  contact_id UUID REFERENCES contacts,
+  status TEXT DEFAULT 'draft',  -- draft, approved, sent, responded
+  generated_message TEXT,
+  segment TEXT,
+  purpose TEXT,
+  created_at TIMESTAMP,
   sent_at TIMESTAMP
+)
+
+-- Upload tracking
+data_uploads (
+  id UUID PRIMARY KEY,
+  file_type TEXT NOT NULL,  -- connections, messages
+  filename TEXT,
+  records_processed INTEGER DEFAULT 0,
+  uploaded_at TIMESTAMP
 )
 ```
 
 ---
 
-### 5. AI Integration (Claude)
+### 3. Warmth Scoring Algorithm
 
-**Status**: Configured but not implemented.
+Calculates relationship "warmth" (0-100) based on message patterns:
 
-**Purpose**: Generate personalized outreach messages.
+| Factor | Points | Logic |
+|--------|--------|-------|
+| Recency | 0-30 | Days since last message (30 if <7d, 0 if >180d) |
+| Frequency | 0-20 | Total messages (20 if 20+ messages) |
+| Depth | 0-25 | Avg length + substantive ratio |
+| Responsiveness | 0-15 | Balance of sent/received (15 if balanced) |
+| Initiation | 0-10 | Do they initiate conversations? |
 
-**Future Flow**:
-```
-1. Get contact profile data
-2. Get campaign template
-3. Send to Claude API with context
-4. Receive personalized message
-5. Store for review/sending
-```
+**Substantive message**: 100+ characters, excludes shallow patterns ("thanks", "congrats", emoji-only).
+
+---
+
+### 4. Audience Segments
+
+Three predefined segments based on use cases:
+
+#### MujerTech
+- **Target**: Women entrepreneurs in Latin America
+- **Detection**: LATAM locations (50+ cities/countries) + entrepreneur keywords
+- **Tone**: Warm, supportive, Spanish phrases OK
+
+#### Cascadia AI
+- **Target**: AI/ML professionals in Pacific Northwest
+- **Detection**: PNW locations + AI/ML keywords in headline/position
+- **Tone**: Professional, tech-savvy, local community focus
+
+#### Job Target
+- **Target**: People at companies you want to work for
+- **Detection**: Company matches target_companies table
+- **Tone**: Curious about their work, not asking for referrals
+
+---
+
+### 5. Resurrection Hooks
+
+Detects reasons to reach out:
+
+| Hook Type | Detection Logic |
+|-----------|-----------------|
+| `dormant` | Warmth ≥40 AND no messages in 60+ days |
+| `promise_made` | Your message contains "I'll", "let me", etc. with no follow-up |
+| `question_unanswered` | They asked "?" and you never replied |
+| `they_waiting` | Last message was from them |
+
+---
+
+### 6. Message Generation
+
+Uses Claude API (claude-sonnet-4-20250514) to generate personalized messages.
+
+**Inputs:**
+- Contact profile data
+- Recent message history (last 5)
+- Segment context
+- Resurrection hooks
+- Purpose (reconnect, introduce, etc.)
+
+**Output:**
+- 1-3 message variations
+- Token usage tracking
+
+---
+
+### 7. Frontend (React + TypeScript)
+
+**Location**: `/frontend/`
+
+**Status**: Basic setup, not yet functional.
+
+**Planned Features:**
+- Dashboard with warmth heatmap
+- Contact list with filters (segment, warmth, has messages)
+- Opportunity cards (resurrection hooks)
+- Message generation UI
+- Outreach queue management
 
 ---
 
@@ -188,61 +259,52 @@ messages (
 backend/
 ├── app/
 │   ├── __init__.py
-│   ├── main.py                 # FastAPI app
-│   ├── config.py               # Settings
+│   ├── main.py                    # FastAPI app + routers
+│   ├── config.py                  # Pydantic settings
+│   ├── database.py                # SQLAlchemy async setup
+│   ├── models/
+│   │   ├── __init__.py
+│   │   ├── contact.py             # Contact model
+│   │   ├── message.py             # Message model
+│   │   ├── resurrection.py        # ResurrectionOpportunity model
+│   │   ├── target_company.py      # TargetCompany model
+│   │   ├── queue.py               # OutreachQueueItem model
+│   │   └── upload.py              # DataUpload model
+│   ├── routes/
+│   │   ├── __init__.py
+│   │   ├── upload.py              # CSV upload endpoints
+│   │   ├── contacts.py            # Contact CRUD
+│   │   ├── target_companies.py    # Target company CRUD
+│   │   ├── resurrection.py        # Opportunity endpoints
+│   │   └── generate.py            # Message generation
 │   ├── services/
 │   │   ├── __init__.py
-│   │   └── linkedin_browser.py # Playwright scraper (580+ lines)
-│   ├── models/                 # SQLAlchemy models (future)
-│   ├── routes/                 # API routes (future)
-│   └── utils/                  # Helpers (future)
+│   │   ├── export_parser.py       # LinkedIn CSV parser
+│   │   ├── warmth_scorer.py       # Warmth calculation
+│   │   ├── segmenter.py           # Audience segmentation
+│   │   ├── resurrection_scanner.py # Opportunity detection
+│   │   ├── message_generator.py   # Claude API integration
+│   │   └── linkedin_browser.py    # Playwright scraper
+│   └── schemas/
+│       └── contact.py             # Pydantic schemas
 ├── playwright-data/
-│   └── cookies.json            # Session cookies (gitignored)
-├── test_auth.py                # Test script
-└── pyproject.toml              # Dependencies
-```
+│   └── cookies.json               # Session cookies (gitignored)
+├── .env                           # Environment variables (gitignored)
+└── pyproject.toml                 # Dependencies
 
----
+frontend/
+├── src/
+│   ├── App.tsx
+│   └── main.tsx
+├── package.json
+└── vite.config.ts
 
-## Data Models
-
-### Connection
-
-```python
-{
-    "name": str,           # "John Doe"
-    "headline": str,       # "" (not extracted from list)
-    "profile_url": str     # "https://linkedin.com/in/johndoe/"
-}
-```
-
-### Follower
-
-```python
-{
-    "name": str,           # "Jane Smith"
-    "headline": str,       # "Software Engineer at Google"
-    "profile_url": str     # "https://linkedin.com/in/janesmith/"
-}
-```
-
-### Profile (Full)
-
-```python
-{
-    "name": str,           # "John Doe"
-    "headline": str,       # "Senior Developer | Python Expert"
-    "location": str,       # "San Francisco, CA"
-    "company": str,        # "TechCorp"
-    "about": str,          # "I build things..." (max 500 chars)
-    "experience": [        # Up to 5 entries
-        {"title": str, "company": str}
-    ],
-    "education": [         # Up to 3 entries
-        {"school": str, "degree": str}
-    ],
-    "profile_url": str
-}
+docs/
+├── README.md
+├── ARCHITECTURE.md                # This file
+├── PROGRESS.md                    # Implementation progress
+├── DECISIONS.md                   # Design decisions
+└── CHANGELOG.md
 ```
 
 ---
@@ -252,15 +314,21 @@ backend/
 ### Environment Variables
 
 ```bash
+# backend/.env
+
 # App
 APP_ENV=development
 SECRET_KEY=your-secret-key
 
-# Database
-DATABASE_URL=postgresql://...
+# Database (Supabase)
+DATABASE_URL=postgresql://postgres:password@db.xxx.supabase.co:5432/postgres
 
-# AI
-ANTHROPIC_API_KEY=sk-ant-...
+# AI (Anthropic)
+ANTHROPIC_API_KEY=sk-ant-api03-...
+
+# LinkedIn (optional, for scraper)
+LINKEDIN_EMAIL=your@email.com
+LINKEDIN_PASSWORD=your-password
 
 # Rate Limits
 RATE_LIMIT_MESSAGES_PER_DAY=50
@@ -269,19 +337,111 @@ RATE_LIMIT_PROFILES_PER_DAY=100
 
 ---
 
-## Security Considerations
+## API Reference
 
-1. **No credential storage**: Uses cookie-based auth only
-2. **Cookies are gitignored**: Session data stays local
-3. **Rate limiting**: Built-in delays to avoid detection
-4. **No automated messaging**: Human review required (future)
+### Upload
+
+```bash
+# Upload connections
+POST /api/upload/connections
+Content-Type: multipart/form-data
+file: Connections.csv
+
+# Upload messages
+POST /api/upload/messages
+Content-Type: multipart/form-data
+file: messages.csv
+
+# Get upload stats
+GET /api/upload/status
+```
+
+### Contacts
+
+```bash
+# List contacts (with filters)
+GET /api/contacts?page=1&page_size=50&search=john&warmth_min=40&segment=cascadia
+
+# Get contact detail
+GET /api/contacts/{id}
+
+# Get top warmth contacts
+GET /api/contacts/top-warmth?limit=20
+
+# Get stats
+GET /api/contacts/stats
+
+# Recalculate warmth scores
+POST /api/contacts/recalculate-warmth
+
+# Run segmentation
+POST /api/contacts/segment?all_contacts=true
+```
+
+### Target Companies
+
+```bash
+# List all
+GET /api/target-companies
+
+# Add one
+POST /api/target-companies
+{"name": "Google", "notes": "Dream company"}
+
+# Add bulk
+POST /api/target-companies/bulk
+[{"name": "Google"}, {"name": "Microsoft"}]
+
+# Delete
+DELETE /api/target-companies/{id}
+```
+
+### Resurrection
+
+```bash
+# Run full scan
+POST /api/resurrection/scan
+
+# Run specific scan
+POST /api/resurrection/scan/dormant
+
+# Get opportunities
+GET /api/resurrection/opportunities?hook_type=they_waiting&limit=50
+
+# Dismiss opportunity
+POST /api/resurrection/opportunities/{id}/dismiss
+```
+
+### Generate
+
+```bash
+# Generate message
+POST /api/generate/message
+{
+  "contact_id": "uuid",
+  "purpose": "reconnect",
+  "segment": "cascadia",
+  "custom_context": "They just got promoted",
+  "num_variations": 2
+}
+
+# Batch generate
+POST /api/generate/batch
+{
+  "contact_ids": ["uuid1", "uuid2"],
+  "purpose": "reconnect"
+}
+
+# List purposes
+GET /api/generate/purposes
+```
 
 ---
 
-## Future Roadmap
+## Security Considerations
 
-1. **Phase 3**: Database integration (store scraped data)
-2. **Phase 4**: API endpoints (expose data to frontend)
-3. **Phase 5**: Frontend dashboard
-4. **Phase 6**: AI message generation
-5. **Phase 7**: Campaign management
+1. **No credential storage**: Uses cookie-based auth for LinkedIn scraper
+2. **Cookies are gitignored**: Session data stays local
+3. **Rate limiting**: Built-in delays to avoid LinkedIn detection
+4. **Human review required**: All messages need manual approval before sending
+5. **API keys in .env**: Never committed to repository

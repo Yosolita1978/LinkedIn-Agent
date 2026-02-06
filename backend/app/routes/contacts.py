@@ -21,6 +21,7 @@ from app.schemas.contact import (
     ResurrectionOpportunitySummary,
 )
 from app.services.warmth_scorer import recalculate_warmth_for_contacts_with_messages
+from app.services.segmenter import segment_all_contacts, segment_contacts_without_tags
 
 router = APIRouter(prefix="/api/contacts", tags=["contacts"])
 
@@ -287,4 +288,32 @@ async def recalculate_warmth(db: AsyncSession = Depends(get_db)):
     return {
         "status": "completed",
         "contacts_processed": result["contacts_processed"],
+    }
+
+
+@router.post("/segment")
+async def run_segmentation(
+    db: AsyncSession = Depends(get_db),
+    all_contacts: bool = Query(False, description="Re-segment all contacts, not just untagged"),
+):
+    """
+    Run audience segmentation on contacts.
+
+    By default, only segments contacts without existing tags (incremental).
+    Set all_contacts=true to re-segment everyone.
+    """
+    if all_contacts:
+        result = await segment_all_contacts(db)
+    else:
+        result = await segment_contacts_without_tags(db)
+
+    return {
+        "status": "completed",
+        "contacts_processed": result["contacts_processed"],
+        "segments": {
+            "mujertech": result["mujertech_count"],
+            "cascadia": result["cascadia_count"],
+            "job_target": result["job_target_count"],
+        },
+        "no_segment": result["no_segment_count"],
     }

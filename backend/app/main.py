@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import get_settings
 from app.database import init_db
-from app.routes import upload_router, contacts_router
+from app.routes import upload_router, contacts_router, target_companies_router, resurrection_router, generate_router
 
 # Import models so SQLAlchemy knows about them before creating tables
 from app.models import (
@@ -31,7 +31,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="LinkedIn Intelligence & Outreach Agent",
     description="Personal intelligence tool for strategic LinkedIn outreach",
-    version="0.2.0",
+    version="0.3.0",
     lifespan=lifespan,
 )
 
@@ -47,6 +47,9 @@ app.add_middleware(
 # Register routers
 app.include_router(upload_router)
 app.include_router(contacts_router)
+app.include_router(target_companies_router)
+app.include_router(resurrection_router)
+app.include_router(generate_router)
 
 
 @app.get("/")

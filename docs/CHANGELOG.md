@@ -4,6 +4,72 @@ All notable changes to this project are documented here.
 
 ---
 
+## [0.3.0] - 2026-02-05
+
+### Phase 3: Intelligence Engine Complete
+
+Major milestone - the backend intelligence system is now fully functional.
+
+#### Added
+
+- **Database Schema (6 Tables)**
+  - `contacts` - Core contact data with warmth scoring and segmentation
+  - `messages` - Message history with direction and content analysis
+  - `resurrection_opportunities` - Detected outreach hooks
+  - `target_companies` - Job search target list
+  - `outreach_queue_items` - Message queue (pending implementation)
+  - `data_uploads` - Upload tracking
+
+- **LinkedIn Export Parser** (`services/export_parser.py`)
+  - Parse Connections.csv (2,333 contacts imported)
+  - Parse messages.csv (5,823 messages imported)
+  - Automatic direction detection (sent/received)
+  - Sponsored message filtering
+  - Contact creation from message data
+
+- **Warmth Scoring Engine** (`services/warmth_scorer.py`)
+  - 5-factor scoring algorithm (0-100 points)
+  - Recency (30pts), Frequency (20pts), Depth (25pts)
+  - Responsiveness (15pts), Initiation (10pts)
+  - Substantive message detection
+
+- **Audience Segmentation** (`services/segmenter.py`)
+  - MujerTech segment (LATAM entrepreneurs)
+  - Cascadia AI segment (PNW AI professionals)
+  - Job Target segment (target company matching)
+  - 50+ LATAM locations, 30+ PNW locations
+  - AI/ML keyword detection
+
+- **Resurrection Scanner** (`services/resurrection_scanner.py`)
+  - Dormant relationship detection (301 found)
+  - Broken promise detection (3 found)
+  - Unanswered question detection (2 found)
+  - "They're waiting" detection (16 found)
+  - Pattern matching with context extraction
+
+- **Message Generator** (`services/message_generator.py`)
+  - Claude API integration (claude-sonnet-4-20250514)
+  - Segment-aware prompting
+  - 7 message purposes (reconnect, introduce, etc.)
+  - Multi-variation generation
+  - Token usage tracking
+
+- **API Routes**
+  - `/api/upload/` - CSV file uploads
+  - `/api/contacts/` - Contact CRUD with filtering
+  - `/api/target-companies/` - Target company management
+  - `/api/resurrection/` - Opportunity detection
+  - `/api/generate/` - Message generation
+
+#### Technical Details
+
+- SQLAlchemy async with asyncpg driver
+- Supabase PostgreSQL backend
+- Pydantic schemas for validation
+- Full API documentation at `/docs`
+
+---
+
 ## [0.2.0] - 2026-01-27
 
 ### Phase 2: Playwright Module Complete
@@ -73,23 +139,27 @@ All notable changes to this project are documented here.
 
 ## Upcoming
 
-### [0.3.0] - Planned
+### [0.4.0] - Planned: Queue & Workflow
 
-- Database integration (store scraped contacts)
-- API endpoints for CRUD operations
-- Background job queue for scraping
+- Outreach queue management routes
+- Status workflow (draft → approved → sent → responded)
+- Duplicate prevention
+- Daily outreach recommendations
 
-### [0.4.0] - Planned
+### [0.5.0] - Planned: Frontend Dashboard
 
-- Frontend dashboard
-- Contact list display
-- Profile viewer
+- React dashboard with warmth visualization
+- Contact list with filters
+- Opportunity cards
+- Message generation UI
+- Queue management UI
 
-### [0.5.0] - Planned
+### [0.6.0] - Planned: Advanced Features
 
-- Claude AI integration
-- Message generation
+- LinkedIn profile enrichment (via scraper)
 - Campaign management
+- Analytics and reporting
+- Scheduling suggestions
 
 ---
 
@@ -98,7 +168,8 @@ All notable changes to this project are documented here.
 | Version | Date | Milestone |
 |---------|------|-----------|
 | 0.1.0 | Jan 8, 2026 | Initial setup |
-| 0.2.0 | Jan 27, 2026 | Playwright module complete |
-| 0.3.0 | TBD | Database integration |
-| 0.4.0 | TBD | Frontend dashboard |
-| 0.5.0 | TBD | AI integration |
+| 0.2.0 | Jan 27, 2026 | Playwright scraper |
+| 0.3.0 | Feb 5, 2026 | Intelligence engine |
+| 0.4.0 | TBD | Queue & workflow |
+| 0.5.0 | TBD | Frontend dashboard |
+| 0.6.0 | TBD | Advanced features |
