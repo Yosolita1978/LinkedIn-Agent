@@ -5,6 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import get_settings
 from app.database import init_db
+from app.routes import upload_router, contacts_router
 
 # Import models so SQLAlchemy knows about them before creating tables
 from app.models import (
@@ -42,6 +43,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Register routers
+app.include_router(upload_router)
+app.include_router(contacts_router)
 
 
 @app.get("/")
