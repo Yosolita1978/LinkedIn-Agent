@@ -15,7 +15,7 @@ from uuid import UUID
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import OutreachQueueItem, Contact
+from app.models import OutreachQueueItem, Contact, ResurrectionOpportunity
 
 
 # Valid status transitions
@@ -73,6 +73,16 @@ async def add_to_queue(
     )
 
     db.add(item)
+
+    # Auto-dismiss active resurrection opportunities for this contact
+    opp_stmt = select(ResurrectionOpportunity).where(
+        ResurrectionOpportunity.contact_id == contact_id,
+        ResurrectionOpportunity.is_active == True,
+    )
+    opp_result = await db.execute(opp_stmt)
+    for opp in opp_result.scalars().all():
+        opp.is_active = False
+
     await db.commit()
     await db.refresh(item)
     return item
@@ -170,6 +180,7 @@ async def list_queue_items(
             Contact.name.label("contact_name"),
             Contact.headline.label("contact_headline"),
             Contact.company.label("contact_company"),
+            Contact.linkedin_url.label("contact_linkedin_url"),
         )
         .join(Contact, OutreachQueueItem.contact_id == Contact.id)
     )
@@ -213,6 +224,7 @@ async def list_queue_items(
             "contact_name": row[1],
             "contact_headline": row[2],
             "contact_company": row[3],
+            "contact_linkedin_url": row[4],
         })
 
     return items, total

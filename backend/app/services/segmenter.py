@@ -63,29 +63,29 @@ def is_mujertech_candidate(contact: Contact) -> bool:
     """
     Check if contact matches MujerTech segment criteria.
 
-    Matches if:
-    - Location is in LATAM, OR
-    - Role/headline contains entrepreneur keywords AND location suggests Spanish-speaking
+    Matches if any of these are true:
+    - Location contains a LATAM city/country
+    - Company name contains a LATAM city/country (e.g. "Startup Colombia")
+    - Position/headline contains entrepreneur keywords AND any LATAM signal in
+      location, company, or position
     """
     location = (contact.location or "").lower()
     headline = (contact.headline or "").lower()
     position = (contact.position or "").lower()
     company = (contact.company or "").lower()
 
-    # Check location for LATAM
-    location_match = any(loc in location for loc in LATAM_LOCATIONS)
+    # Check all available text fields for LATAM indicators
+    all_text = f"{location} {company} {position} {headline}"
+    latam_match = any(loc in all_text for loc in LATAM_LOCATIONS)
 
-    # Check for entrepreneur keywords in headline/position
-    text_to_check = f"{headline} {position} {company}"
-    entrepreneur_match = any(kw in text_to_check for kw in ENTREPRENEUR_KEYWORDS)
-
-    # Match if in LATAM location, or entrepreneur with some LATAM indicator
-    if location_match:
+    if latam_match:
         return True
 
-    # If entrepreneur, also check if name or other signals suggest LATAM connection
-    # (This is a softer match - entrepreneurs anywhere could be interested)
-    if entrepreneur_match and location_match:
+    # Check for entrepreneur keywords as a softer signal
+    role_text = f"{headline} {position} {company}"
+    entrepreneur_match = any(kw in role_text for kw in ENTREPRENEUR_KEYWORDS)
+
+    if entrepreneur_match and latam_match:
         return True
 
     return False
@@ -132,13 +132,29 @@ AI_KEYWORDS = [
 ]
 
 
+PNW_COMPANIES = [
+    # Major PNW tech companies (headquarters or big presence)
+    "microsoft", "amazon", "meta", "google", "boeing", "t-mobile",
+    "zillow", "redfin", "expedia", "nordstrom", "starbucks",
+    "tableau", "smartsheet", "auth0", "outreach", "icertis",
+    "nike", "intel", "hp", "nvidia",
+    # AI-specific PNW companies
+    "allen institute", "ai2", "openai", "anthropic",
+    # Accelerators/communities
+    "techstars seattle", "cascadia", "seattle ai",
+]
+
+
 def is_cascadia_candidate(contact: Contact) -> bool:
     """
     Check if contact matches Cascadia AI segment criteria.
 
     Matches if:
-    - Location is in Pacific Northwest AND
-    - Headline/position contains AI/ML keywords
+    - (Location OR company) suggests Pacific Northwest, AND
+    - (Headline, position, company, or about) contains AI/ML keywords
+
+    Also matches if position/headline directly contains AI keywords and
+    company is a known PNW tech company.
     """
     location = (contact.location or "").lower()
     headline = (contact.headline or "").lower()
@@ -146,13 +162,16 @@ def is_cascadia_candidate(contact: Contact) -> bool:
     company = (contact.company or "").lower()
     about = (contact.about or "").lower()
 
-    # Must be in PNW
+    # Check PNW via location
     location_match = any(loc in location for loc in PNW_LOCATIONS)
 
-    if not location_match:
+    # Also check if company is a known PNW company
+    company_pnw = any(c in company for c in PNW_COMPANIES)
+
+    if not location_match and not company_pnw:
         return False
 
-    # Must have AI/ML keywords
+    # Must have AI/ML keywords in any text field
     text_to_check = f"{headline} {position} {company} {about}"
     ai_match = any(kw in text_to_check for kw in AI_KEYWORDS)
 

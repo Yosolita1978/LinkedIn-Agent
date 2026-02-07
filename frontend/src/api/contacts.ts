@@ -43,3 +43,20 @@ export function fetchContactStats(): Promise<ContactStats> {
 export function fetchTopWarmth(limit: number = 10): Promise<TopWarmthContact[]> {
   return apiFetch<TopWarmthContact[]>(`/api/contacts/top-warmth?limit=${limit}`);
 }
+
+export interface SegmentationResult {
+  status: string;
+  contacts_processed: number;
+  segments: {
+    mujertech: number;
+    cascadia: number;
+    job_target: number;
+  };
+  no_segment: number;
+}
+
+export function runSegmentation(allContacts: boolean = true): Promise<SegmentationResult> {
+  return apiFetch<SegmentationResult>(`/api/contacts/segment?all_contacts=${allContacts}`, {
+    method: "POST",
+  });
+}

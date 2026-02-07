@@ -100,6 +100,7 @@ export interface ResurrectionOpportunity {
   contact_name: string;
   contact_company: string | null;
   contact_headline: string | null;
+  contact_linkedin_url: string | null;
   warmth_score: number | null;
   hook_type: string;
   hook_detail: string | null;
@@ -130,6 +131,7 @@ export interface QueueItem {
   contact_name: string;
   contact_headline: string | null;
   contact_company: string | null;
+  contact_linkedin_url: string | null;
 }
 
 export interface QueueListResponse {
@@ -180,4 +182,34 @@ export interface GenerateResponse {
   segment: string | null;
   variations: string[];
   tokens_used: number;
+}
+
+// ============================================================================
+// Ranking Types
+// ============================================================================
+
+export interface PriorityBreakdown {
+  warmth_component: number;
+  segment_component: number;
+  urgency_component: number;
+}
+
+export interface Recommendation {
+  contact_id: string;
+  contact_name: string;
+  contact_company: string | null;
+  contact_headline: string | null;
+  contact_linkedin_url: string | null;
+  warmth_score: number;
+  segment_tags: string[] | null;
+  priority_score: number;
+  priority_breakdown: PriorityBreakdown;
+  reasons: string[];
+  resurrection_hooks: { hook_type: string; hook_detail: string | null }[];
+}
+
+export interface RecommendationsResponse {
+  recommendations: Recommendation[];
+  total_eligible: number;
+  generated_at: string;
 }

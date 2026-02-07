@@ -6,9 +6,11 @@ from typing import Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, HTTPException
+from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
+from app.models import ResurrectionOpportunity
 from app.services.resurrection_scanner import (
     run_full_scan,
     get_active_opportunities,
@@ -96,8 +98,17 @@ async def list_opportunities(
 
     opportunities = await get_active_opportunities(db, hook_type, limit)
 
+    # Get true total count (not limited)
+    count_stmt = select(func.count(ResurrectionOpportunity.id)).where(
+        ResurrectionOpportunity.is_active == True
+    )
+    if hook_type:
+        count_stmt = count_stmt.where(ResurrectionOpportunity.hook_type == hook_type)
+    total_result = await db.execute(count_stmt)
+    total_count = total_result.scalar() or 0
+
     return {
-        "count": len(opportunities),
+        "count": total_count,
         "opportunities": opportunities,
     }
 

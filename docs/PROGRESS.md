@@ -1,7 +1,7 @@
 # LinkedIn Intelligence & Outreach Agent - Progress Report
 
-**Date**: February 5, 2026
-**Status**: Backend Core Complete, Frontend Pending
+**Date**: February 6, 2026
+**Status**: Backend + Frontend + Contact Ranking Complete
 
 ---
 
@@ -194,6 +194,12 @@ All endpoints are live at `http://localhost:8000`:
 | POST | `/batch` | Generate for multiple contacts |
 | GET | `/purposes` | List available purposes |
 
+#### Ranking Routes (`/api/ranking/`)
+| Method | Endpoint | Purpose |
+|--------|----------|---------|
+| GET | `/recommendations` | Ranked outreach list (filter by segment, limit) |
+| GET | `/recommendations/{id}` | Priority breakdown for one contact |
+
 ---
 
 ## Current Data Stats
@@ -214,23 +220,35 @@ From your LinkedIn export:
 - [x] Save generated messages to queue (as drafts)
 - [x] Status workflow: draft → approved → sent → responded
 - [x] Prevent duplicate outreach (one active item per contact)
-- [ ] **Testing with frontend** — will be validated when the React dashboard is built
+- [x] Testing with frontend — validated via React dashboard
 
-### Phase 2: Contact Ranking
-- [ ] Combined ranking algorithm (warmth + segment + opportunity)
-- [ ] Priority queue for outreach
-- [ ] Daily outreach recommendations
+### Phase 2: OpenAI Migration — DONE
+- [x] Switched from Anthropic Claude to OpenAI Agents SDK
+- [x] Built-in Traces for observability (platform.openai.com/traces)
+- [x] Removed langchain/langgraph dependencies
 
-### Phase 3: Frontend Dashboard
-- [ ] React UI for viewing contacts
-- [ ] Warmth visualization
-- [ ] Segment filtering
-- [ ] Opportunity cards
-- [ ] Message generation UI
-- [ ] Queue management UI
+### Phase 3: Frontend Dashboard — DONE
+- [x] React 19 + TypeScript + Vite 7 + Tailwind CSS 4
+- [x] Dark theme UI (slate-800/900 backgrounds)
+- [x] 5 pages: Dashboard, Contacts, Contact Detail, Queue, Opportunities
+- [x] react-router-dom with sidebar navigation
+- [x] Typed API layer (fetch wrappers for all backend endpoints)
+- [x] Shared components: WarmthBadge, SegmentBadge, StatusBadge, LoadingSpinner, ErrorMessage, EmptyState
 
-### Phase 4: Advanced Features
-- [ ] LinkedIn profile scraping (enrich contacts)
+### Phase 4: Contact Ranking — DONE
+- [x] Combined ranking algorithm: priority = warmth(40%) + segment(25%) + urgency(35%)
+- [x] Backend service + 2 API endpoints (`/api/ranking/recommendations`, `/api/ranking/recommendations/{id}`)
+- [x] "Today's Outreach" page with segment filter, priority badges, reasons, generate & queue flow
+- [x] Dashboard preview card showing top 5 recommendations
+- [x] Auto-dismiss resurrection opportunities when contact is added to queue
+
+### Phase 5: Playwright Automation — NEXT
+- [ ] Use existing Playwright service to auto-connect with followers (people who follow you but aren't connections)
+- [ ] Handle 0-connection contacts: initiate connection requests via Playwright
+- [ ] Automate connection note personalization using existing message generator
+
+### Phase 6: Advanced Features
+- [ ] LinkedIn profile scraping/enrichment via Playwright
 - [ ] Campaign management (group outreach)
 - [ ] Analytics and reporting
 - [ ] Automated scheduling suggestions
@@ -311,13 +329,13 @@ curl -X POST http://localhost:8000/api/generate/message \
 │                              ▼                               │
 │                       ┌─────────────┐                       │
 │                       │ FastAPI API │                       │
-│                       │ (7 routers) │                       │
+│                       │ (8 routers) │                       │
 │                       └─────────────┘                       │
 │                              │                               │
 │                              ▼                               │
 │                       ┌─────────────┐                       │
-│                       │  Frontend   │  ← NOT YET BUILT     │
-│                       │   (React)   │                       │
+│                       │  Frontend   │  ← React 19 + Dark   │
+│                       │   (React)   │    Theme Dashboard    │
 │                       └─────────────┘                       │
 │                                                              │
 └─────────────────────────────────────────────────────────────┘
@@ -327,6 +345,6 @@ curl -X POST http://localhost:8000/api/generate/message \
 
 ## Next Session Priorities
 
-1. **Contact Ranking** - Combined ranking algorithm + daily recommendations
-2. **Frontend Dashboard** - Build the React UI (contacts, warmth, queue, generation)
-3. **Testing** - End-to-end testing of queue workflow via frontend
+1. **Playwright Automation** - Use existing Playwright service to connect with followers and handle 0-connection contacts
+2. **Profile Enrichment** - Scrape LinkedIn profiles to fill in missing data (location, headline, about)
+3. **Advanced Features** - Campaign management, analytics, automated scheduling

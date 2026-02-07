@@ -3,8 +3,10 @@ import { Link } from "react-router-dom";
 import { fetchContactStats, fetchTopWarmth } from "../api/contacts";
 import { fetchQueueStats } from "../api/queue";
 import { fetchOpportunities } from "../api/resurrection";
-import type { ContactStats, TopWarmthContact, QueueStats } from "../types";
+import { fetchRecommendations } from "../api/ranking";
+import type { ContactStats, TopWarmthContact, QueueStats, Recommendation } from "../types";
 import WarmthBadge from "../components/WarmthBadge";
+import PriorityBadge from "../components/PriorityBadge";
 import LoadingSpinner from "../components/LoadingSpinner";
 import ErrorMessage from "../components/ErrorMessage";
 
@@ -13,6 +15,7 @@ export default function DashboardPage() {
   const [topContacts, setTopContacts] = useState<TopWarmthContact[]>([]);
   const [queueStats, setQueueStats] = useState<QueueStats | null>(null);
   const [opportunityCount, setOpportunityCount] = useState<number>(0);
+  const [topRecs, setTopRecs] = useState<Recommendation[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -25,12 +28,14 @@ export default function DashboardPage() {
       fetchTopWarmth(10),
       fetchQueueStats(),
       fetchOpportunities(),
+      fetchRecommendations(5),
     ])
-      .then(([statsData, topData, queueData, oppData]) => {
+      .then(([statsData, topData, queueData, oppData, recData]) => {
         setStats(statsData);
         setTopContacts(topData);
         setQueueStats(queueData);
         setOpportunityCount(oppData.count);
+        setTopRecs(recData.recommendations);
       })
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false));
@@ -89,6 +94,36 @@ export default function DashboardPage() {
         </div>
       </div>
 
+      {/* Today's Top Outreach */}
+      {topRecs.length > 0 && (
+        <div className="bg-slate-800 rounded-lg border border-slate-700 p-4 mb-8">
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-sm font-medium text-slate-400">Today's Top Outreach</h2>
+            <Link to="/recommendations" className="text-sm text-blue-400 hover:text-blue-300">View all</Link>
+          </div>
+          <div className="divide-y divide-slate-700">
+            {topRecs.map((rec) => (
+              <Link
+                key={rec.contact_id}
+                to={`/contacts/${rec.contact_id}`}
+                className="flex items-center justify-between py-2 hover:bg-slate-700/50 -mx-2 px-2 rounded"
+              >
+                <div className="min-w-0">
+                  <p className="text-sm font-medium text-slate-200 truncate">{rec.contact_name}</p>
+                  <p className="text-xs text-slate-500 truncate">
+                    {rec.reasons[0] ?? rec.contact_company ?? ""}
+                  </p>
+                </div>
+                <div className="flex items-center gap-2 shrink-0 ml-4">
+                  <WarmthBadge score={rec.warmth_score} size="sm" />
+                  <PriorityBadge score={rec.priority_score} size="sm" />
+                </div>
+              </Link>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Top Warmth Contacts */}
       <div className="bg-slate-800 rounded-lg border border-slate-700 p-4 mb-8">
         <div className="flex items-center justify-between mb-3">
@@ -117,6 +152,9 @@ export default function DashboardPage() {
 
       {/* Quick Actions */}
       <div className="flex gap-3">
+        <Link to="/recommendations" className="px-4 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-500">
+          Today's Outreach
+        </Link>
         <Link to="/contacts" className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-500">
           View Contacts
         </Link>

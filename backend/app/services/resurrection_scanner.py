@@ -496,6 +496,7 @@ async def get_active_opportunities(
             "contact_name": contact.name,
             "contact_company": contact.company,
             "contact_headline": contact.headline,
+            "contact_linkedin_url": contact.linkedin_url,
             "warmth_score": contact.warmth_score,
             "hook_type": opp.hook_type,
             "hook_detail": opp.hook_detail,

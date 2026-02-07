@@ -1,7 +1,8 @@
 import { useEffect, useState, useRef } from "react";
 import { Link } from "react-router-dom";
-import { fetchContacts } from "../api/contacts";
+import { fetchContacts, runSegmentation } from "../api/contacts";
 import type { Contact } from "../types";
+import type { SegmentationResult } from "../api/contacts";
 import WarmthBadge from "../components/WarmthBadge";
 import SegmentBadge from "../components/SegmentBadge";
 import LoadingSpinner from "../components/LoadingSpinner";
@@ -18,6 +19,11 @@ export default function ContactsPage() {
   const [sortOrder, setSortOrder] = useState("desc");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  // Segmentation state
+  const [segmenting, setSegmenting] = useState(false);
+  const [segResult, setSegResult] = useState<SegmentationResult | null>(null);
+  const [segError, setSegError] = useState<string | null>(null);
 
   const pageSize = 30;
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -53,6 +59,22 @@ export default function ContactsPage() {
     }, 300);
     return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
   }, [search]);
+
+  async function handleSegmentation() {
+    setSegmenting(true);
+    setSegError(null);
+    setSegResult(null);
+
+    try {
+      const result = await runSegmentation(true);
+      setSegResult(result);
+      loadContacts();
+    } catch (err) {
+      setSegError(err instanceof Error ? err.message : "Segmentation failed");
+    } finally {
+      setSegmenting(false);
+    }
+  }
 
   const totalPages = Math.ceil(total / pageSize);
 
@@ -95,7 +117,27 @@ export default function ContactsPage() {
         >
           {sortOrder === "desc" ? "Desc" : "Asc"}
         </button>
+        <button
+          onClick={handleSegmentation}
+          disabled={segmenting}
+          className="px-3 py-2 bg-purple-600 text-white rounded-lg text-sm font-medium hover:bg-purple-500 disabled:opacity-50"
+        >
+          {segmenting ? "Segmenting..." : "Run Segmentation"}
+        </button>
       </div>
+
+      {segResult && (
+        <div className="mb-4 p-3 bg-purple-500/10 border border-purple-500/30 rounded-lg">
+          <p className="text-sm text-purple-300">
+            Segmented {segResult.contacts_processed.toLocaleString()} contacts:
+            <span className="ml-2 text-purple-400">MujerTech: {segResult.segments.mujertech}</span>
+            <span className="ml-2 text-teal-400">Cascadia: {segResult.segments.cascadia}</span>
+            <span className="ml-2 text-amber-400">Job Target: {segResult.segments.job_target}</span>
+            <span className="ml-2 text-slate-400">No segment: {segResult.no_segment}</span>
+          </p>
+        </div>
+      )}
+      {segError && <ErrorMessage message={segError} />}
 
       <p className="text-xs text-slate-500 mb-4">{total.toLocaleString()} contacts</p>
 

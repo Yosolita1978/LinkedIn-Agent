@@ -4,6 +4,38 @@ All notable changes to this project are documented here.
 
 ---
 
+## [0.5.0] - 2026-02-06
+
+### Phase 5: Frontend Dashboard
+
+#### Added
+
+- **Full React Dashboard** (5 pages, dark theme)
+  - Dashboard: stat cards, warmth distribution bar, top 10 contacts, quick actions
+  - Contacts: search, segment filter, sort by warmth/name/messages, pagination (30/page)
+  - Contact Detail: profile, warmth breakdown bars (5 factors), message stats, resurrection opportunities, generate message + add to queue
+  - Queue: status tabs (draft/approved/sent/responded), inline message editing, approve/send/delete workflow
+  - Opportunities: hook type tabs, dismiss, generate & queue inline
+
+- **Frontend Architecture**
+  - React 19 + TypeScript 5.9 + Vite 7 + Tailwind CSS 4
+  - react-router-dom with sidebar navigation (Layout component)
+  - Typed API layer: `api/client.ts` (base fetch), `api/contacts.ts`, `api/queue.ts`, `api/resurrection.ts`, `api/generate.ts`
+  - 7 shared components: WarmthBadge, SegmentBadge, StatusBadge, LoadingSpinner, ErrorMessage, EmptyState, Layout
+
+- **Dark Theme UI**
+  - slate-800/900 backgrounds, slate-200/400 text
+  - Translucent colored badges (warmth: red/orange/blue/slate, segments: purple/teal/amber)
+  - Blue accent for active states and primary actions
+
+#### Fixed
+
+- CORS: added `127.0.0.1:5173` origin alongside `localhost:5173`
+- PostgreSQL ARRAY `.contains()`: switched from `sqlalchemy.ARRAY` to `sqlalchemy.dialects.postgresql.ARRAY`
+- Database migration: added missing `purpose` and `approved_at` columns to `outreach_queue` table
+
+---
+
 ## [0.4.0] - 2026-02-06
 
 ### Phase 4: OpenAI Migration + Queue Management
@@ -176,22 +208,13 @@ Major milestone - the backend intelligence system is now fully functional.
 
 ## Upcoming
 
-### [0.4.0] - Feb 6, 2026: OpenAI + Queue (DONE)
+### [0.6.0] - Planned: Contact Ranking
 
-- OpenAI Agents SDK migration with Traces
-- Outreach queue management (7 endpoints)
-- Status workflow (draft → approved → sent → responded)
-- Duplicate prevention
+- Combined ranking algorithm (warmth + segment + opportunity)
+- Priority queue for outreach
+- Daily outreach recommendations
 
-### [0.5.0] - Planned: Frontend Dashboard
-
-- React dashboard with warmth visualization
-- Contact list with filters
-- Opportunity cards
-- Message generation UI
-- Queue management UI
-
-### [0.6.0] - Planned: Advanced Features
+### [0.7.0] - Planned: Advanced Features
 
 - LinkedIn profile enrichment (via scraper)
 - Campaign management
@@ -208,5 +231,6 @@ Major milestone - the backend intelligence system is now fully functional.
 | 0.2.0 | Jan 27, 2026 | Playwright scraper |
 | 0.3.0 | Feb 5, 2026 | Intelligence engine |
 | 0.4.0 | Feb 6, 2026 | OpenAI + Queue workflow |
-| 0.5.0 | TBD | Frontend dashboard |
-| 0.6.0 | TBD | Advanced features |
+| 0.5.0 | Feb 6, 2026 | Frontend dashboard (dark theme) |
+| 0.6.0 | TBD | Contact ranking |
+| 0.7.0 | TBD | Advanced features |
