@@ -16,19 +16,61 @@
 
 ---
 
-## Module 1: Network Overview (snapshot)
+## Module 1: Network Overview (snapshot) — DONE
 
 **Source:** Contacts table + Segments
+**Status:** Implemented 2026-02-10
 
 - Total contacts, unique companies, segment distribution
 - Warmth distribution (hot/warm/cool/cold buckets with counts)
 - Average warmth by segment (mujertech vs cascadia vs job_target vs untagged)
 - Top 10 companies by contact count ("where is your network concentrated?")
-- Network archetype classification (Thought Leader / Insider / Connector / Climber / Builder — computed from company diversity, title density, senior contact %)
+- Network archetype classification (Thought Leader / Insider / Connector / Climber / Builder)
+- **Top Companies → Target Companies**: "+" button on each company card to add as target company, checkmark if already added
 
-**Why it matters:** This is the "at a glance" view. You see it once and it tells you the shape of your network. Refresh when you re-import LinkedIn data.
+**Files:**
+- Backend: `backend/app/routes/analytics.py` — `GET /api/analytics/overview`
+- Frontend: `frontend/src/pages/DashboardPage.tsx` (6 stat cards, archetype, warmth/segment bars, top companies with add-to-target, top outreach, top warmth contacts)
+- Types: `frontend/src/types/index.ts` (NetworkOverview, SegmentStats, CompanyCount, NetworkArchetype)
+- API: `frontend/src/api/analytics.ts`
 
-**Endpoint:** `GET /api/analytics/overview`
+---
+
+## Module 1b: Dashboard Enhancements (planned)
+
+### Enhancement 2: Untagged Contacts Insights Panel
+
+**What:** New Dashboard section below Audience Segments showing who the untagged contacts are.
+
+**Backend (`backend/app/routes/analytics.py`):**
+- Add two new fields to `GET /api/analytics/overview` response:
+  - `untagged_top_companies`: top 10 companies among contacts with NULL/empty segment_tags
+  - `untagged_top_locations`: top 5 locations among contacts with NULL/empty segment_tags
+- Queries: filter by `Contact.segment_tags.is_(None) | Contact.segment_tags == []`, group by company/location
+
+**Frontend (`frontend/src/pages/DashboardPage.tsx`):**
+- New card showing untagged count + breakdown by company and location
+- "+" buttons on each company to add as target company (reuses same pattern from Enhancement 1)
+- "Re-segment All" button → calls `POST /api/contacts/segment?all_contacts=true` → reloads dashboard
+
+**Frontend types (`frontend/src/types/index.ts`):**
+- Extend `NetworkOverview` with `untagged_top_companies: CompanyCount[]` and `untagged_top_locations: { location: string; count: number }[]`
+
+### Enhancement 3: Contacts Page — "Untagged" Filter
+
+**What:** Add "Untagged" option to the segment dropdown on ContactsPage.
+
+**Backend (`backend/app/routes/contacts.py`):**
+- In `list_contacts()`, handle `segment=untagged` specially:
+  ```python
+  if segment == "untagged":
+      stmt = stmt.where(Contact.segment_tags.is_(None) | Contact.segment_tags == cast([], ARRAY(String)))
+  else:
+      stmt = stmt.where(Contact.segment_tags.contains([segment]))
+  ```
+
+**Frontend (`frontend/src/pages/ContactsPage.tsx`):**
+- Add `<option value="untagged">Untagged</option>` to the segment dropdown (line ~98)
 
 ---
 

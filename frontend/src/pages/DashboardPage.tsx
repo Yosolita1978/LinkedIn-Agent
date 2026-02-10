@@ -5,6 +5,7 @@ import { fetchQueueStats } from "../api/queue";
 import { fetchOpportunities } from "../api/resurrection";
 import { fetchRecommendations } from "../api/ranking";
 import { fetchNetworkOverview } from "../api/analytics";
+import { fetchTargetCompanies, addTargetCompany } from "../api/targetCompanies";
 import type { NetworkOverview, TopWarmthContact, QueueStats, Recommendation } from "../types";
 import WarmthBadge from "../components/WarmthBadge";
 import PriorityBadge from "../components/PriorityBadge";
@@ -31,6 +32,7 @@ export default function DashboardPage() {
   const [queueStats, setQueueStats] = useState<QueueStats | null>(null);
   const [opportunityCount, setOpportunityCount] = useState<number>(0);
   const [topRecs, setTopRecs] = useState<Recommendation[]>([]);
+  const [targetCompanyNames, setTargetCompanyNames] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -44,13 +46,15 @@ export default function DashboardPage() {
       fetchQueueStats(),
       fetchOpportunities(),
       fetchRecommendations(5),
+      fetchTargetCompanies(),
     ])
-      .then(([overviewData, topData, queueData, oppData, recData]) => {
+      .then(([overviewData, topData, queueData, oppData, recData, targetData]) => {
         setOverview(overviewData);
         setTopContacts(topData);
         setQueueStats(queueData);
         setOpportunityCount(oppData.count);
         setTopRecs(recData.recommendations);
+        setTargetCompanyNames(new Set(targetData.map((tc) => tc.name.toLowerCase())));
       })
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false));
@@ -194,20 +198,46 @@ export default function DashboardPage() {
 
       {/* Top Companies */}
       <div className="bg-slate-800 rounded-lg border border-slate-700 p-4 mb-8">
-        <h2 className="text-sm font-medium text-slate-400 mb-3">Top Companies in Your Network</h2>
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-sm font-medium text-slate-400">Top Companies in Your Network</h2>
+          <Link to="/target-companies" className="text-xs text-blue-400 hover:text-blue-300">Manage targets</Link>
+        </div>
         <div className="grid grid-cols-2 lg:grid-cols-5 gap-2">
           {overview.top_companies.map((company) => {
             const maxCount = overview.top_companies[0]?.count ?? 1;
             const pct = (company.count / maxCount) * 100;
+            const isTarget = targetCompanyNames.has(company.company.toLowerCase());
             return (
               <div key={company.company} className="relative overflow-hidden rounded bg-slate-700/50 px-3 py-2">
                 <div
                   className="absolute inset-y-0 left-0 bg-blue-500/15"
                   style={{ width: `${pct}%` }}
                 />
-                <div className="relative">
-                  <p className="text-xs font-medium text-slate-300 truncate">{company.company}</p>
-                  <p className="text-xs text-slate-500">{company.count} contacts</p>
+                <div className="relative flex items-start justify-between gap-1">
+                  <div className="min-w-0">
+                    <p className="text-xs font-medium text-slate-300 truncate">{company.company}</p>
+                    <p className="text-xs text-slate-500">{company.count} contacts</p>
+                  </div>
+                  {isTarget ? (
+                    <span className="text-emerald-400 text-sm shrink-0" title="Already a target company">&#10003;</span>
+                  ) : (
+                    <button
+                      className="text-slate-500 hover:text-blue-400 text-sm shrink-0 transition-colors"
+                      title="Add as target company"
+                      onClick={() => {
+                        addTargetCompany({ name: company.company })
+                          .then(() => {
+                            setTargetCompanyNames((prev) => new Set([...prev, company.company.toLowerCase()]));
+                          })
+                          .catch(() => {
+                            // If 400 (duplicate), still mark as target locally
+                            setTargetCompanyNames((prev) => new Set([...prev, company.company.toLowerCase()]));
+                          });
+                      }}
+                    >
+                      +
+                    </button>
+                  )}
                 </div>
               </div>
             );
