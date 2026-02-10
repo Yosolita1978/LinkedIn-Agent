@@ -40,6 +40,19 @@ export function updateQueueMessage(id: string, message: string): Promise<QueueIt
   });
 }
 
+export function regenerateQueueMessage(
+  id: string,
+  customInstruction?: string,
+): Promise<{ message: string; all_variations: string[] }> {
+  return apiFetch<{ message: string; all_variations: string[] }>(
+    `/api/queue/${id}/regenerate`,
+    {
+      method: "POST",
+      body: JSON.stringify({ custom_instruction: customInstruction || null }),
+    },
+  );
+}
+
 export function deleteQueueItem(id: string): Promise<void> {
   return apiFetch<void>(`/api/queue/${id}`, { method: "DELETE" });
 }

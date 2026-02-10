@@ -263,10 +263,62 @@ async def scan_followers(
     # Step 1: Scrape followers list
     followers = await browser.scrape_followers(max_items=max_followers)
     stats["followers_scraped"] = len(followers)
-    logger.info(f"Scraped {len(followers)} followers")
+    logger.info(f"Scraped {len(followers)} followers (raw)")
 
     if not followers:
         return {"candidates": [], "stats": stats}
+
+    # Step 1b: Deduplicate by normalized URL (scrolling can produce repeats)
+    seen_urls = set()
+    unique_followers = []
+    for follower in followers:
+        normalized = normalize_linkedin_url(follower["profile_url"])
+        if normalized not in seen_urls:
+            seen_urls.add(normalized)
+            unique_followers.append(follower)
+
+    dupes_removed = len(followers) - len(unique_followers)
+    if dupes_removed:
+        logger.info(f"Removed {dupes_removed} duplicate followers")
+    followers = unique_followers
+
+    # Step 1c: Filter out own profile (shows up in page header/nav)
+    # Strategy 1: try to get own profile URL from the browser page
+    own_profile_url = await browser.get_own_profile_url()
+    if own_profile_url:
+        own_normalized = normalize_linkedin_url(own_profile_url)
+        before = len(followers)
+        followers = [
+            f for f in followers
+            if normalize_linkedin_url(f["profile_url"]) != own_normalized
+        ]
+        self_removed = before - len(followers)
+        if self_removed:
+            logger.info(f"Filtered out {self_removed} own profile entries (by URL)")
+
+    # Strategy 2: filter out any profile URL that appears 3+ times
+    # (own profile link appears on every page load, real followers appear once)
+    from collections import Counter
+    url_counts = Counter(
+        normalize_linkedin_url(f["profile_url"]) for f in followers
+    )
+    repeated_urls = {url for url, count in url_counts.items() if count >= 3}
+    if repeated_urls:
+        before = len(followers)
+        seen_repeated = set()
+        filtered = []
+        for f in followers:
+            norm = normalize_linkedin_url(f["profile_url"])
+            if norm in repeated_urls:
+                if norm not in seen_repeated:
+                    seen_repeated.add(norm)
+                    # Skip entirely — if it appears 3+ times it's the user's own profile
+            else:
+                filtered.append(f)
+        followers = filtered
+        logger.info(f"Filtered out {before - len(followers)} repeated profile entries")
+
+    stats["followers_scraped"] = len(followers)
 
     # Step 2: Get existing contact URLs from DB for filtering
     stmt = select(Contact.linkedin_url)

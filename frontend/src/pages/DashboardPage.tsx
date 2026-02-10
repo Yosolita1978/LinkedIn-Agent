@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { fetchContactStats, fetchTopWarmth } from "../api/contacts";
 import { fetchQueueStats } from "../api/queue";
 import { fetchOpportunities } from "../api/resurrection";
@@ -56,11 +56,35 @@ export default function DashboardPage() {
 
       {/* Stat Cards */}
       <div className="grid grid-cols-2 lg:grid-cols-5 gap-4 mb-8">
-        <StatCard label="Total Contacts" value={stats.total_contacts} />
-        <StatCard label="With Messages" value={stats.contacts_with_messages} />
-        <StatCard label="Avg Warmth" value={Math.round(stats.average_warmth)} />
-        <StatCard label="Queue Drafts" value={queueStats?.by_status?.draft ?? 0} />
-        <StatCard label="Opportunities" value={opportunityCount} />
+        <StatCard
+          label="Total Contacts"
+          value={stats.total_contacts}
+          tooltip="All LinkedIn connections imported into the system"
+          to="/contacts"
+        />
+        <StatCard
+          label="With Messages"
+          value={stats.contacts_with_messages}
+          tooltip="Contacts who have exchanged at least one message with you"
+          to="/contacts"
+        />
+        <StatCard
+          label="Avg Warmth"
+          value={Math.round(stats.average_warmth)}
+          tooltip="Average warmth score (0-100) across all contacts based on recency, frequency, and depth of interactions"
+        />
+        <StatCard
+          label="Queue Drafts"
+          value={queueStats?.by_status?.draft ?? 0}
+          tooltip="Messages drafted and waiting for your review before sending"
+          to="/queue"
+        />
+        <StatCard
+          label="Opportunities"
+          value={opportunityCount}
+          tooltip="Contacts with a recent trigger (job change, post, milestone) — good moment to reconnect"
+          to="/opportunities"
+        />
       </div>
 
       {/* Warmth Distribution */}
@@ -169,11 +193,35 @@ export default function DashboardPage() {
   );
 }
 
-function StatCard({ label, value }: { label: string; value: number }) {
-  return (
-    <div className="bg-slate-800 rounded-lg border border-slate-700 p-4">
-      <p className="text-xs text-slate-500 mb-1">{label}</p>
+function StatCard({ label, value, tooltip, to }: {
+  label: string;
+  value: number;
+  tooltip?: string;
+  to?: string;
+}) {
+  const navigate = useNavigate();
+
+  const card = (
+    <div
+      className={`bg-slate-800 rounded-lg border border-slate-700 p-4 ${to ? "cursor-pointer hover:border-slate-500 hover:bg-slate-750 transition-colors" : ""}`}
+      onClick={to ? () => navigate(to) : undefined}
+    >
+      <div className="flex items-center gap-1 mb-1">
+        <p className="text-xs text-slate-500">{label}</p>
+        {tooltip && (
+          <div className="relative group">
+            <span className="text-slate-600 hover:text-slate-400 cursor-help text-xs">?</span>
+            <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-3 py-2 bg-slate-900 border border-slate-600 rounded-lg text-xs text-slate-300 w-52 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-10 shadow-lg">
+              {tooltip}
+              <div className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-slate-600" />
+            </div>
+          </div>
+        )}
+      </div>
       <p className="text-2xl font-bold text-white">{value.toLocaleString()}</p>
+      {to && <p className="text-[10px] text-slate-600 mt-1">Click to view</p>}
     </div>
   );
+
+  return card;
 }

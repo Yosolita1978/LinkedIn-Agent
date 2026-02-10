@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { fetchQueueItems, fetchQueueStats, updateQueueStatus, updateQueueMessage, deleteQueueItem } from "../api/queue";
+import { fetchQueueItems, fetchQueueStats, updateQueueStatus, updateQueueMessage, regenerateQueueMessage, deleteQueueItem } from "../api/queue";
 import type { QueueItem, QueueStats } from "../types";
 import StatusBadge from "../components/StatusBadge";
 import LoadingSpinner from "../components/LoadingSpinner";
@@ -21,6 +21,10 @@ export default function QueuePage() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editText, setEditText] = useState("");
   const [actionLoading, setActionLoading] = useState<string | null>(null);
+
+  // Regenerate state
+  const [regenInstruction, setRegenInstruction] = useState("");
+  const [regenLoading, setRegenLoading] = useState(false);
 
   function loadData() {
     setLoading(true);
@@ -74,6 +78,19 @@ export default function QueuePage() {
       setError(err instanceof Error ? err.message : "Delete failed");
     } finally {
       setActionLoading(null);
+    }
+  }
+
+  async function handleRegenerate(itemId: string) {
+    setRegenLoading(true);
+    try {
+      const data = await regenerateQueueMessage(itemId, regenInstruction || undefined);
+      setEditText(data.message);
+      setRegenInstruction("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Regeneration failed");
+    } finally {
+      setRegenLoading(false);
     }
   }
 
@@ -158,6 +175,38 @@ export default function QueuePage() {
                     rows={4}
                     className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-lg text-sm text-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500"
                   />
+
+                  {/* Regenerate with AI */}
+                  <div className="flex items-center gap-2 mt-2 p-2 bg-slate-700/50 rounded-lg border border-slate-600/50">
+                    <input
+                      type="text"
+                      value={regenInstruction}
+                      onChange={(e) => setRegenInstruction(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" && !regenLoading) handleRegenerate(item.id);
+                      }}
+                      placeholder="e.g. make it about Cascadia, shorter, more casual..."
+                      className="flex-1 px-2 py-1.5 bg-slate-800 border border-slate-600 rounded text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-purple-500"
+                    />
+                    <button
+                      onClick={() => handleRegenerate(item.id)}
+                      disabled={regenLoading}
+                      className="px-3 py-1.5 bg-purple-600 text-white rounded text-sm font-medium hover:bg-purple-500 disabled:opacity-50 whitespace-nowrap flex items-center gap-1.5"
+                    >
+                      {regenLoading ? (
+                        <>
+                          <div className="w-3 h-3 animate-spin rounded-full border-2 border-purple-300 border-t-white" />
+                          Generating...
+                        </>
+                      ) : (
+                        "Regenerate"
+                      )}
+                    </button>
+                  </div>
+                  <p className="text-xs text-slate-600 mt-1">
+                    Type an instruction and click Regenerate to get a new AI version
+                  </p>
+
                   <div className="flex gap-2 mt-2">
                     <button
                       onClick={() => handleSaveMessage(item.id)}
@@ -167,7 +216,7 @@ export default function QueuePage() {
                       Save
                     </button>
                     <button
-                      onClick={() => setEditingId(null)}
+                      onClick={() => { setEditingId(null); setRegenInstruction(""); }}
                       className="px-3 py-1.5 border border-slate-600 text-slate-300 rounded-lg text-sm hover:bg-slate-700"
                     >
                       Cancel

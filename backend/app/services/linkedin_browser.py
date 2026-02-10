@@ -213,6 +213,33 @@ class LinkedInBrowser:
         logger.info(f"Login status: {'authenticated' if is_logged else 'not authenticated'}")
         return is_logged
 
+    async def get_own_profile_url(self) -> str | None:
+        """Get the authenticated user's own profile URL from the nav bar."""
+        try:
+            # The profile link in the nav bar points to the user's own profile
+            me_link = await self._page.query_selector(
+                'a[href*="/in/"][class*="global-nav"],'
+                'a[href*="/in/"].ember-view.block,'
+                'img[alt*="Photo of"]'
+            )
+            if me_link:
+                href = await me_link.evaluate('el => el.closest("a")?.href || el.parentElement?.href')
+                if href and "/in/" in href:
+                    logger.debug(f"Own profile URL: {href}")
+                    return href
+
+            # Fallback: look for the "Me" menu link
+            me_nav = await self._page.query_selector('a[href*="/in/"][data-control-name="identity_welcome_message"]')
+            if me_nav:
+                href = await me_nav.get_attribute("href")
+                if href:
+                    return href if href.startswith("http") else f"{self.LINKEDIN_BASE_URL}{href}"
+
+        except Exception as e:
+            logger.debug(f"Could not get own profile URL: {e}")
+
+        return None
+
     async def manual_login(self) -> bool:
         """
         Open browser in headed mode for manual login.

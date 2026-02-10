@@ -29,6 +29,13 @@ class OutreachQueueItemUpdate(BaseModel):
     generated_message: Optional[str] = None
 
 
+class RegenerateRequest(BaseModel):
+    custom_instruction: Optional[str] = Field(
+        None,
+        description="Custom instruction for regeneration, e.g. 'make it about Cascadia'",
+    )
+
+
 class StatusUpdate(BaseModel):
     status: str = Field(description="New status: draft, approved, sent, responded")
 

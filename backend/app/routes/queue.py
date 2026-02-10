@@ -14,6 +14,7 @@ from app.database import get_db
 from app.schemas.queue import (
     OutreachQueueItemCreate,
     OutreachQueueItemUpdate,
+    RegenerateRequest,
     StatusUpdate,
     OutreachQueueItemResponse,
     QueueListResponse,
@@ -24,6 +25,7 @@ from app.schemas.queue import (
     VALID_PURPOSES,
 )
 from app.services import queue_service
+from app.services.message_generator import generate_message
 
 
 router = APIRouter(prefix="/api/queue", tags=["queue"])
@@ -173,6 +175,49 @@ async def update_queue_message(
         return item
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/{item_id}/regenerate")
+async def regenerate_queue_message(
+    item_id: UUID,
+    request: RegenerateRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Regenerate the message for a draft queue item using AI.
+
+    Uses the queue item's contact, purpose, and use_case as context.
+    Optionally accepts a custom instruction (e.g. "make it about Cascadia").
+    Returns a new message variation without saving it — user decides.
+    """
+    item = await queue_service.get_queue_item(db, item_id)
+    if not item:
+        raise HTTPException(status_code=404, detail="Queue item not found")
+
+    if item.status != "draft":
+        raise HTTPException(status_code=400, detail="Only draft items can be regenerated")
+
+    # Map use_case to segment name for the generator
+    segment_map = {
+        "mujertech": "mujertech",
+        "cascadia": "cascadia",
+        "job_search": "job_target",
+    }
+    segment = segment_map.get(item.use_case)
+
+    result = await generate_message(
+        db=db,
+        contact_id=str(item.contact_id),
+        purpose=item.purpose,
+        segment=segment,
+        custom_context=request.custom_instruction,
+        num_variations=1,
+    )
+
+    return {
+        "message": result["variations"][0] if result["variations"] else "",
+        "all_variations": result["variations"],
+    }
 
 
 @router.delete("/{item_id}")
