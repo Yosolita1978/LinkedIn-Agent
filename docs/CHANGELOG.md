@@ -4,6 +4,86 @@ All notable changes to this project are documented here.
 
 ---
 
+## [0.8.0] - 2026-02-09
+
+### Phase 5 Complete: Follower Connection Automation + UX Improvements
+
+#### Added — Follower Connection Pipeline
+
+- **LinkedIn Voyager API** (`services/linkedin_voyager.py`) — NEW
+  - Fast profile enrichment via LinkedIn's internal REST API (~1s per profile vs ~10s with Playwright)
+  - Cookie-based auth using existing `li_at` and `JSESSIONID` cookies
+  - Handles both vanity URLs (`/in/john-doe`) and encoded member IDs (`ACoAAA...`)
+  - Tries 3 endpoint strategies: `profileView`, `dash/profiles`, `miniProfiles`
+  - Falls back to Playwright browser scraping if Voyager fails
+
+- **3-Phase Connection Flow** (scan → generate notes → review/edit → send)
+  - `POST /api/followers/scan` — Scrape followers, deduplicate, enrich via Voyager/Playwright, segment
+  - `POST /api/followers/generate-notes` — AI-generated personalized connection notes (≤300 chars)
+  - `POST /api/followers/connect` — Send connection requests with user-reviewed notes
+  - All followers become candidates (not just segment-matched ones)
+  - "general" segment context added for people with no specific segment match
+
+- **Follower Deduplication & Self-Filtering**
+  - URL normalization for consistent comparison
+  - Removes duplicate entries from scroll pagination
+  - Filters out user's own profile (URL-based + frequency-based detection)
+
+- **Connection Request Handling**
+  - `send_connection_request()` in LinkedInBrowser — navigates to profile, clicks Connect, adds note
+  - When "Add a note" button isn't found, returns `note_not_supported` status with the note for manual copy
+  - Rate limiting: 15-30 seconds between connection requests
+
+#### Added — Dashboard Improvements
+
+- **Tooltip "?" icons** on all 5 stat cards (hover to see what each stat means)
+- **Clickable stat cards** — Total Contacts → `/contacts`, Queue Drafts → `/queue`, Opportunities → `/opportunities`
+
+#### Added — Queue AI Regeneration
+
+- `POST /api/queue/{item_id}/regenerate` — Regenerate a draft message with custom AI instructions
+  - Accepts `custom_instruction` (e.g. "make it about Cascadia", "shorter", "more casual")
+  - Uses the queue item's existing contact/purpose/segment context
+  - Returns new message without auto-saving — user decides
+- **Frontend**: text input + purple "Regenerate" button in the queue edit view
+  - Press Enter or click to regenerate; spinner during generation
+  - New message replaces textarea content; user can still edit before saving
+
+#### Added — Frontend Components
+
+- **FollowersPage** (`/followers`) — Full workflow UI with 7 phases:
+  - idle → scanning → candidates → generating → reviewing → connecting → results
+  - `ScanProgress` component: animated step-by-step checklist with profile counter and elapsed timer
+  - Candidate selection with checkboxes, segment badges, LinkedIn profile links
+  - Note review phase: editable textareas (300 char limit), remove candidates, back navigation
+  - Results: per-candidate status badges (Sent, Already Connected, Manual Note Needed, Failed)
+  - Copy-to-clipboard for manual notes
+- **SegmentBadge** component for mujertech/cascadia/job_target badges
+
+#### Changed
+
+- `follower_connector.py` — Major rewrite:
+  - Voyager API first, Playwright fallback for enrichment
+  - Reduced delays (0.5-1.5s for Voyager, 1.0-2.5s for browser)
+  - All enriched profiles become candidates (not just segment-matched)
+  - Separate `generate_notes_for_candidates()` function
+  - `connect_with_candidates()` now expects pre-reviewed notes
+- `linkedin_browser.py` — Performance + reliability:
+  - Reduced navigation delays and scroll rounds
+  - Multiple CSS selector fallbacks for profile fields
+  - `get_own_profile_url()` method
+  - `send_connection_request()` graceful handling of missing "Add a note" button
+
+#### Fixed
+
+- Empty profile data from LinkedIn scraping (CSS selectors updated with multiple fallbacks)
+- Voyager API HTTP 410 for encoded member IDs (added multiple endpoint strategies)
+- Own profile appearing 7x in candidates (URL + frequency filtering)
+- Duplicate followers from scroll pagination (URL deduplication)
+- Connection notes crash on empty segment list (`segments[0]` → `segments[0] if segments else "general"`)
+
+---
+
 ## [0.5.0] - 2026-02-06
 
 ### Phase 5: Frontend Dashboard
@@ -208,18 +288,19 @@ Major milestone - the backend intelligence system is now fully functional.
 
 ## Upcoming
 
-### [0.6.0] - Planned: Contact Ranking
+### [0.9.0] - Planned: End-to-End Testing & Polish
 
-- Combined ranking algorithm (warmth + segment + opportunity)
-- Priority queue for outreach
-- Daily outreach recommendations
+- Full end-to-end testing of follower connection pipeline (needs LinkedIn cookies + running backend)
+- Voyager API encoded member ID endpoints may need further testing with real data
+- Error recovery: handle mid-scan browser crashes gracefully
+- Campaign management (group outreach sequences)
 
-### [0.7.0] - Planned: Advanced Features
+### [1.0.0] - Planned: Advanced Features
 
-- LinkedIn profile enrichment (via scraper)
-- Campaign management
-- Analytics and reporting
-- Scheduling suggestions
+- LinkedIn profile enrichment for existing contacts (via Voyager API)
+- Analytics and reporting dashboard
+- Automated scheduling suggestions
+- Export outreach history
 
 ---
 
@@ -232,5 +313,4 @@ Major milestone - the backend intelligence system is now fully functional.
 | 0.3.0 | Feb 5, 2026 | Intelligence engine |
 | 0.4.0 | Feb 6, 2026 | OpenAI + Queue workflow |
 | 0.5.0 | Feb 6, 2026 | Frontend dashboard (dark theme) |
-| 0.6.0 | TBD | Contact ranking |
-| 0.7.0 | TBD | Advanced features |
+| 0.8.0 | Feb 9, 2026 | Follower automation + Voyager API + Dashboard/Queue UX |

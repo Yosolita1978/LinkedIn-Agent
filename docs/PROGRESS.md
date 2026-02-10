@@ -1,7 +1,7 @@
 # LinkedIn Intelligence & Outreach Agent - Progress Report
 
-**Date**: February 6, 2026
-**Status**: Backend + Frontend + Contact Ranking Complete
+**Date**: February 9, 2026
+**Status**: Backend + Frontend + Contact Ranking + Follower Automation Complete
 
 ---
 
@@ -242,16 +242,34 @@ From your LinkedIn export:
 - [x] Dashboard preview card showing top 5 recommendations
 - [x] Auto-dismiss resurrection opportunities when contact is added to queue
 
-### Phase 5: Playwright Automation — NEXT
-- [ ] Use existing Playwright service to auto-connect with followers (people who follow you but aren't connections)
-- [ ] Handle 0-connection contacts: initiate connection requests via Playwright
-- [ ] Automate connection note personalization using existing message generator
+### Phase 5: Follower Connection Automation — DONE
+- [x] LinkedIn Voyager API for fast profile enrichment (~1s vs ~10s with Playwright)
+- [x] 3-phase connection flow: scan → generate notes → review/edit → send
+- [x] All followers become candidates (not just segment-matched ones)
+- [x] "general" segment for people with no specific match
+- [x] Follower deduplication + self-filtering (own profile removed)
+- [x] Graceful handling of "Add a note" button not found
+- [x] Frontend: full FollowersPage with 7 phases, animated progress, note editing
+- [x] Connection notes generated via OpenAI Agents SDK (GPT-4o)
 
-### Phase 6: Advanced Features
-- [ ] LinkedIn profile scraping/enrichment via Playwright
-- [ ] Campaign management (group outreach)
-- [ ] Analytics and reporting
+### Phase 5b: Dashboard & Queue UX — DONE
+- [x] Dashboard stat cards: "?" tooltips explaining each stat
+- [x] Dashboard stat cards: clickable, navigate to relevant pages
+- [x] Queue: AI message regeneration with custom instructions ("make it about Cascadia")
+- [x] Queue: text input + Regenerate button in edit mode
+
+### Phase 6: End-to-End Testing & Polish — NEXT
+- [ ] Full end-to-end test of follower connection pipeline with real LinkedIn cookies
+- [ ] Voyager API: validate encoded member ID endpoints with real data
+- [ ] Error recovery: handle mid-scan browser crashes
+- [ ] Performance: test Voyager vs Playwright enrichment times at scale
+
+### Phase 7: Advanced Features
+- [ ] LinkedIn profile enrichment for existing contacts (via Voyager API)
+- [ ] Campaign management (group outreach sequences)
+- [ ] Analytics and reporting dashboard
 - [ ] Automated scheduling suggestions
+- [ ] Export outreach history
 
 ---
 
@@ -329,7 +347,17 @@ curl -X POST http://localhost:8000/api/generate/message \
 │                              ▼                               │
 │                       ┌─────────────┐                       │
 │                       │ FastAPI API │                       │
-│                       │ (8 routers) │                       │
+│                       │ (9 routers) │                       │
+│                       └─────────────┘                       │
+│                              │                               │
+│                       ┌─────────────┐                       │
+│                       │  Voyager    │  ← LinkedIn internal  │
+│                       │  API Client │    REST API (fast)    │
+│                       └─────────────┘                       │
+│                              │                               │
+│                       ┌─────────────┐                       │
+│                       │  Playwright │  ← Browser fallback   │
+│                       │  Browser    │    + Connection send   │
 │                       └─────────────┘                       │
 │                              │                               │
 │                              ▼                               │
@@ -343,8 +371,23 @@ curl -X POST http://localhost:8000/api/generate/message \
 
 ---
 
+#### Follower Routes (`/api/followers/`)
+| Method | Endpoint | Purpose |
+|--------|----------|---------|
+| POST | `/scan` | Scan followers: scrape, deduplicate, enrich via Voyager/Playwright, segment |
+| POST | `/generate-notes` | Generate personalized connection notes (AI) for review |
+| POST | `/connect` | Send connection requests with user-approved notes |
+
+#### Queue Routes (`/api/queue/`) — Updated
+| Method | Endpoint | Purpose |
+|--------|----------|---------|
+| POST | `/{id}/regenerate` | Regenerate message with custom AI instruction |
+
+---
+
 ## Next Session Priorities
 
-1. **Playwright Automation** - Use existing Playwright service to connect with followers and handle 0-connection contacts
-2. **Profile Enrichment** - Scrape LinkedIn profiles to fill in missing data (location, headline, about)
-3. **Advanced Features** - Campaign management, analytics, automated scheduling
+1. **End-to-End Testing** - Test the full follower connection pipeline with real LinkedIn cookies and a running backend
+2. **Voyager API Validation** - Confirm encoded member ID endpoints work with real LinkedIn data
+3. **Profile Enrichment** - Use Voyager API to fill in missing data for existing contacts
+4. **Advanced Features** - Campaign management, analytics, automated scheduling
