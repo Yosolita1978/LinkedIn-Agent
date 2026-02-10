@@ -39,9 +39,10 @@ async def get_authenticated_browser() -> LinkedInBrowser:
     Start a browser and verify LinkedIn authentication.
     Raises HTTPException if not authenticated.
     Returns an open browser — caller must call browser.stop() when done.
+    Uses headless=False because LinkedIn blocks headless Chromium.
     """
     browser = LinkedInBrowser()
-    await browser.start()
+    await browser.start(headless=False)
 
     if not await browser.is_logged_in():
         await browser.stop()

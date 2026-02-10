@@ -243,7 +243,7 @@ class LinkedInVoyager:
             entity_type = entity.get("$type", "")
             self._extract_from_entity(entity, entity_type, profile)
 
-        return profile if profile["name"] else None
+        return profile if self._is_valid_name(profile["name"]) else None
 
     def _parse_dash_profile(self, data: dict) -> dict | None:
         """Parse the /identity/dash/profiles response."""
@@ -262,7 +262,7 @@ class LinkedInVoyager:
             entity_type = entity.get("$type", "")
             self._extract_from_entity(entity, entity_type, profile)
 
-        return profile if profile["name"] else None
+        return profile if self._is_valid_name(profile["name"]) else None
 
     def _parse_mini_profile(self, data: dict) -> dict | None:
         """Parse the /identity/miniProfiles response (basic info only)."""
@@ -285,7 +285,7 @@ class LinkedInVoyager:
         if " at " in occupation:
             profile["company"] = occupation.split(" at ", 1)[1].strip()
 
-        return profile if profile["name"] else None
+        return profile if self._is_valid_name(profile["name"]) else None
 
     def _empty_profile(self) -> dict:
         """Return an empty profile template."""
@@ -299,6 +299,14 @@ class LinkedInVoyager:
             "education": [],
             "profile_url": "",
         }
+
+    def _is_valid_name(self, name: str) -> bool:
+        """Check if a parsed name is a real person name, not a LinkedIn error message."""
+        if not name:
+            return False
+        name_lower = name.lower()
+        error_phrases = ["may be private", "profile", "linkedin member", "not found"]
+        return not any(phrase in name_lower for phrase in error_phrases)
 
     def _extract_from_entity(self, entity: dict, entity_type: str, profile: dict) -> None:
         """Extract profile data from a single Voyager entity into the profile dict."""

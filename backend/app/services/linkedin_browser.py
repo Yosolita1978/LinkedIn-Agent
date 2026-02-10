@@ -102,6 +102,7 @@ class LinkedInBrowser:
         if cookies_path is None:
             cookies_path = Path(__file__).parents[2] / "playwright-data" / "cookies.json"
         self._cookies_path = cookies_path
+        self._storage_state_path = cookies_path.parent / "storage_state.json"
         logger.debug(f"Initialized LinkedInBrowser with cookies path: {cookies_path}")
 
     async def __aenter__(self) -> "LinkedInBrowser":
@@ -112,30 +113,40 @@ class LinkedInBrowser:
         await self.stop()
 
     async def start(self, headless: bool = True) -> None:
-        """Start the browser and load cookies if available."""
+        """Start the browser and load session state if available."""
         logger.info(f"Starting browser (headless={headless})")
         self._playwright = await async_playwright().start()
-        self._browser = await self._playwright.chromium.launch(headless=headless)
+        self._browser = await self._playwright.chromium.launch(
+            headless=headless,
+            args=["--disable-blink-features=AutomationControlled"],
+        )
 
         # Anti-detection: random viewport and user agent each session
         viewport = random_viewport()
         user_agent = random.choice(USER_AGENTS)
         logger.debug(f"Using viewport {viewport['width']}x{viewport['height']}, UA: {user_agent[:50]}...")
 
+        # Load full storage state (cookies + localStorage) if available
+        storage_state = None
+        if self._storage_state_path.exists():
+            storage_state = str(self._storage_state_path)
+            logger.info(f"Loading storage state from {self._storage_state_path}")
+
         self._context = await self._browser.new_context(
             viewport=viewport,
             user_agent=user_agent,
-            # Additional anti-detection settings
             locale="en-US",
             timezone_id="America/New_York",
+            storage_state=storage_state,
         )
         self._page = await self._context.new_page()
 
-        if self._cookies_path.exists():
+        # Fall back to cookies-only if no storage state
+        if not storage_state and self._cookies_path.exists():
             await self._load_cookies()
-            logger.info("Loaded existing cookies")
-        else:
-            logger.info("No cookies file found, will need to authenticate")
+            logger.info("Loaded existing cookies (no storage state found)")
+        elif not storage_state:
+            logger.info("No cookies or storage state found, will need to authenticate")
 
     async def stop(self) -> None:
         """Close browser and cleanup resources."""
@@ -163,12 +174,16 @@ class LinkedInBrowser:
             raise LinkedInError(f"Invalid cookies file: {e}")
 
     async def _save_cookies(self) -> None:
-        """Save current cookies to file."""
+        """Save current cookies and full storage state to files."""
         self._cookies_path.parent.mkdir(parents=True, exist_ok=True)
         cookies = await self._context.cookies()
         with open(self._cookies_path, "w") as f:
             json.dump(cookies, f, indent=2)
         logger.info(f"Saved {len(cookies)} cookies to {self._cookies_path}")
+
+        # Also save full storage state (cookies + localStorage + sessionStorage)
+        await self._context.storage_state(path=str(self._storage_state_path))
+        logger.info(f"Saved storage state to {self._storage_state_path}")
 
     async def _human_scroll(self, scroll_amount: int = 300, steps: int = 3) -> None:
         """
