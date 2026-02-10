@@ -276,3 +276,46 @@ export interface ConnectResponse {
   results: ConnectResult[];
   stats: ConnectStats;
 }
+
+// ============================================================================
+// Analytics Types
+// ============================================================================
+
+export interface SegmentStats {
+  count: number;
+  average_warmth: number;
+}
+
+export interface CompanyCount {
+  company: string;
+  count: number;
+}
+
+export interface NetworkArchetype {
+  archetype: string;
+  scores: Record<string, number>;
+  description: string;
+  strategy: string;
+}
+
+export interface NetworkOverview {
+  totals: {
+    contacts: number;
+    with_messages: number;
+    without_messages: number;
+    unique_companies: number;
+    senior_contacts: number;
+    senior_pct: number;
+  };
+  warmth_distribution: {
+    hot: number;
+    warm: number;
+    cool: number;
+    cold: number;
+    none: number;
+  };
+  average_warmth: number;
+  segments: Record<string, SegmentStats>;
+  top_companies: CompanyCount[];
+  archetype: NetworkArchetype;
+}

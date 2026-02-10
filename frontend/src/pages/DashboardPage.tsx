@@ -1,17 +1,32 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { fetchContactStats, fetchTopWarmth } from "../api/contacts";
+import { fetchTopWarmth } from "../api/contacts";
 import { fetchQueueStats } from "../api/queue";
 import { fetchOpportunities } from "../api/resurrection";
 import { fetchRecommendations } from "../api/ranking";
-import type { ContactStats, TopWarmthContact, QueueStats, Recommendation } from "../types";
+import { fetchNetworkOverview } from "../api/analytics";
+import type { NetworkOverview, TopWarmthContact, QueueStats, Recommendation } from "../types";
 import WarmthBadge from "../components/WarmthBadge";
 import PriorityBadge from "../components/PriorityBadge";
 import LoadingSpinner from "../components/LoadingSpinner";
 import ErrorMessage from "../components/ErrorMessage";
 
+const SEGMENT_LABELS: Record<string, string> = {
+  mujertech: "MujerTech",
+  cascadia: "Cascadia AI",
+  job_target: "Job Target",
+  untagged: "Untagged",
+};
+
+const SEGMENT_COLORS: Record<string, string> = {
+  mujertech: "bg-pink-500",
+  cascadia: "bg-cyan-500",
+  job_target: "bg-amber-500",
+  untagged: "bg-slate-600",
+};
+
 export default function DashboardPage() {
-  const [stats, setStats] = useState<ContactStats | null>(null);
+  const [overview, setOverview] = useState<NetworkOverview | null>(null);
   const [topContacts, setTopContacts] = useState<TopWarmthContact[]>([]);
   const [queueStats, setQueueStats] = useState<QueueStats | null>(null);
   const [opportunityCount, setOpportunityCount] = useState<number>(0);
@@ -24,14 +39,14 @@ export default function DashboardPage() {
     setError(null);
 
     Promise.all([
-      fetchContactStats(),
+      fetchNetworkOverview(),
       fetchTopWarmth(10),
       fetchQueueStats(),
       fetchOpportunities(),
       fetchRecommendations(5),
     ])
-      .then(([statsData, topData, queueData, oppData, recData]) => {
-        setStats(statsData);
+      .then(([overviewData, topData, queueData, oppData, recData]) => {
+        setOverview(overviewData);
         setTopContacts(topData);
         setQueueStats(queueData);
         setOpportunityCount(oppData.count);
@@ -45,33 +60,40 @@ export default function DashboardPage() {
 
   if (loading) return <LoadingSpinner />;
   if (error) return <ErrorMessage message={error} onRetry={loadData} />;
-  if (!stats) return null;
+  if (!overview) return null;
 
-  const warmthDist = stats.warmth_distribution;
+  const warmthDist = overview.warmth_distribution;
   const warmthTotal = warmthDist.hot + warmthDist.warm + warmthDist.cool + warmthDist.cold + warmthDist.none;
+  const segmentTotal = Object.values(overview.segments).reduce((sum, s) => sum + s.count, 0);
 
   return (
     <div>
       <h1 className="text-2xl font-bold text-white mb-6">Dashboard</h1>
 
       {/* Stat Cards */}
-      <div className="grid grid-cols-2 lg:grid-cols-5 gap-4 mb-8">
+      <div className="grid grid-cols-2 lg:grid-cols-6 gap-4 mb-8">
         <StatCard
           label="Total Contacts"
-          value={stats.total_contacts}
+          value={overview.totals.contacts}
           tooltip="All LinkedIn connections imported into the system"
           to="/contacts"
         />
         <StatCard
           label="With Messages"
-          value={stats.contacts_with_messages}
+          value={overview.totals.with_messages}
           tooltip="Contacts who have exchanged at least one message with you"
           to="/contacts"
         />
         <StatCard
-          label="Avg Warmth"
-          value={Math.round(stats.average_warmth)}
-          tooltip="Average warmth score (0-100) across all contacts based on recency, frequency, and depth of interactions"
+          label="Companies"
+          value={overview.totals.unique_companies}
+          tooltip="Unique companies across your network"
+        />
+        <StatCard
+          label="Senior Contacts"
+          value={overview.totals.senior_contacts}
+          subtext={`${overview.totals.senior_pct}% of network`}
+          tooltip="VPs, Directors, C-suite, Founders, Partners, and other senior leaders"
         />
         <StatCard
           label="Queue Drafts"
@@ -82,39 +104,114 @@ export default function DashboardPage() {
         <StatCard
           label="Opportunities"
           value={opportunityCount}
-          tooltip="Contacts with a recent trigger (job change, post, milestone) — good moment to reconnect"
+          tooltip="Dormant contacts with re-engagement hooks — good moment to reconnect"
           to="/opportunities"
         />
       </div>
 
-      {/* Warmth Distribution */}
+      {/* Network Archetype */}
       <div className="bg-slate-800 rounded-lg border border-slate-700 p-4 mb-8">
-        <h2 className="text-sm font-medium text-slate-400 mb-3">Warmth Distribution</h2>
-        {warmthTotal > 0 && (
-          <div className="flex rounded-full overflow-hidden h-4 mb-2 bg-slate-700">
-            {warmthDist.hot > 0 && (
-              <div className="bg-red-500" style={{ width: `${(warmthDist.hot / warmthTotal) * 100}%` }} title={`Hot: ${warmthDist.hot}`} />
-            )}
-            {warmthDist.warm > 0 && (
-              <div className="bg-orange-500" style={{ width: `${(warmthDist.warm / warmthTotal) * 100}%` }} title={`Warm: ${warmthDist.warm}`} />
-            )}
-            {warmthDist.cool > 0 && (
-              <div className="bg-blue-500" style={{ width: `${(warmthDist.cool / warmthTotal) * 100}%` }} title={`Cool: ${warmthDist.cool}`} />
-            )}
-            {warmthDist.cold > 0 && (
-              <div className="bg-slate-500" style={{ width: `${(warmthDist.cold / warmthTotal) * 100}%` }} title={`Cold: ${warmthDist.cold}`} />
-            )}
-            {warmthDist.none > 0 && (
-              <div className="bg-slate-700" style={{ width: `${(warmthDist.none / warmthTotal) * 100}%` }} title={`None: ${warmthDist.none}`} />
-            )}
+        <div className="flex items-center justify-between mb-2">
+          <h2 className="text-sm font-medium text-slate-400">Network Archetype</h2>
+          <span className="text-xs text-slate-500">Avg Warmth: {overview.average_warmth}</span>
+        </div>
+        <div className="flex items-start gap-4">
+          <span className="text-lg font-bold text-emerald-400 shrink-0">
+            {overview.archetype.archetype}
+          </span>
+          <div>
+            <p className="text-sm text-slate-300">{overview.archetype.description}</p>
+            <p className="text-xs text-slate-500 mt-1">{overview.archetype.strategy}</p>
           </div>
-        )}
-        <div className="flex gap-4 text-xs text-slate-500">
-          <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-full bg-red-500" />Hot: {warmthDist.hot}</span>
-          <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-full bg-orange-500" />Warm: {warmthDist.warm}</span>
-          <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-full bg-blue-500" />Cool: {warmthDist.cool}</span>
-          <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-full bg-slate-500" />Cold: {warmthDist.cold}</span>
-          <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-full bg-slate-700 border border-slate-600" />None: {warmthDist.none}</span>
+        </div>
+      </div>
+
+      {/* Warmth Distribution + Segment Distribution side by side */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-8">
+        {/* Warmth Distribution */}
+        <div className="bg-slate-800 rounded-lg border border-slate-700 p-4">
+          <h2 className="text-sm font-medium text-slate-400 mb-3">Warmth Distribution</h2>
+          {warmthTotal > 0 && (
+            <div className="flex rounded-full overflow-hidden h-4 mb-3 bg-slate-700">
+              {warmthDist.hot > 0 && (
+                <div className="bg-red-500" style={{ width: `${(warmthDist.hot / warmthTotal) * 100}%` }} title={`Hot: ${warmthDist.hot}`} />
+              )}
+              {warmthDist.warm > 0 && (
+                <div className="bg-orange-500" style={{ width: `${(warmthDist.warm / warmthTotal) * 100}%` }} title={`Warm: ${warmthDist.warm}`} />
+              )}
+              {warmthDist.cool > 0 && (
+                <div className="bg-blue-500" style={{ width: `${(warmthDist.cool / warmthTotal) * 100}%` }} title={`Cool: ${warmthDist.cool}`} />
+              )}
+              {warmthDist.cold > 0 && (
+                <div className="bg-slate-500" style={{ width: `${(warmthDist.cold / warmthTotal) * 100}%` }} title={`Cold: ${warmthDist.cold}`} />
+              )}
+              {warmthDist.none > 0 && (
+                <div className="bg-slate-700" style={{ width: `${(warmthDist.none / warmthTotal) * 100}%` }} title={`None: ${warmthDist.none}`} />
+              )}
+            </div>
+          )}
+          <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-500">
+            <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-red-500" />Hot: {warmthDist.hot}</span>
+            <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-orange-500" />Warm: {warmthDist.warm}</span>
+            <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-blue-500" />Cool: {warmthDist.cool}</span>
+            <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-slate-500" />Cold: {warmthDist.cold}</span>
+            <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-slate-700 border border-slate-600" />None: {warmthDist.none}</span>
+          </div>
+        </div>
+
+        {/* Segment Distribution */}
+        <div className="bg-slate-800 rounded-lg border border-slate-700 p-4">
+          <h2 className="text-sm font-medium text-slate-400 mb-3">Audience Segments</h2>
+          {segmentTotal > 0 && (
+            <div className="flex rounded-full overflow-hidden h-4 mb-3 bg-slate-700">
+              {Object.entries(overview.segments).map(([key, seg]) =>
+                seg.count > 0 ? (
+                  <div
+                    key={key}
+                    className={SEGMENT_COLORS[key] ?? "bg-slate-600"}
+                    style={{ width: `${(seg.count / segmentTotal) * 100}%` }}
+                    title={`${SEGMENT_LABELS[key] ?? key}: ${seg.count}`}
+                  />
+                ) : null
+              )}
+            </div>
+          )}
+          <div className="space-y-1.5">
+            {Object.entries(overview.segments).map(([key, seg]) => (
+              <div key={key} className="flex items-center justify-between text-xs">
+                <span className="flex items-center gap-1.5 text-slate-400">
+                  <span className={`w-2.5 h-2.5 rounded-full ${SEGMENT_COLORS[key] ?? "bg-slate-600"}`} />
+                  {SEGMENT_LABELS[key] ?? key}
+                </span>
+                <span className="text-slate-500">
+                  {seg.count} contacts &middot; avg warmth {seg.average_warmth}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* Top Companies */}
+      <div className="bg-slate-800 rounded-lg border border-slate-700 p-4 mb-8">
+        <h2 className="text-sm font-medium text-slate-400 mb-3">Top Companies in Your Network</h2>
+        <div className="grid grid-cols-2 lg:grid-cols-5 gap-2">
+          {overview.top_companies.map((company) => {
+            const maxCount = overview.top_companies[0]?.count ?? 1;
+            const pct = (company.count / maxCount) * 100;
+            return (
+              <div key={company.company} className="relative overflow-hidden rounded bg-slate-700/50 px-3 py-2">
+                <div
+                  className="absolute inset-y-0 left-0 bg-blue-500/15"
+                  style={{ width: `${pct}%` }}
+                />
+                <div className="relative">
+                  <p className="text-xs font-medium text-slate-300 truncate">{company.company}</p>
+                  <p className="text-xs text-slate-500">{company.count} contacts</p>
+                </div>
+              </div>
+            );
+          })}
         </div>
       </div>
 
@@ -175,7 +272,7 @@ export default function DashboardPage() {
       </div>
 
       {/* Quick Actions */}
-      <div className="flex gap-3">
+      <div className="flex flex-wrap gap-3">
         <Link to="/recommendations" className="px-4 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-500">
           Today's Outreach
         </Link>
@@ -193,15 +290,16 @@ export default function DashboardPage() {
   );
 }
 
-function StatCard({ label, value, tooltip, to }: {
+function StatCard({ label, value, subtext, tooltip, to }: {
   label: string;
   value: number;
+  subtext?: string;
   tooltip?: string;
   to?: string;
 }) {
   const navigate = useNavigate();
 
-  const card = (
+  return (
     <div
       className={`bg-slate-800 rounded-lg border border-slate-700 p-4 ${to ? "cursor-pointer hover:border-slate-500 hover:bg-slate-750 transition-colors" : ""}`}
       onClick={to ? () => navigate(to) : undefined}
@@ -219,9 +317,8 @@ function StatCard({ label, value, tooltip, to }: {
         )}
       </div>
       <p className="text-2xl font-bold text-white">{value.toLocaleString()}</p>
+      {subtext && <p className="text-[10px] text-slate-500 mt-0.5">{subtext}</p>}
       {to && <p className="text-[10px] text-slate-600 mt-1">Click to view</p>}
     </div>
   );
-
-  return card;
 }
