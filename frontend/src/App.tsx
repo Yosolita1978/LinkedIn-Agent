@@ -7,6 +7,7 @@ import QueuePage from "./pages/QueuePage";
 import OpportunitiesPage from "./pages/OpportunitiesPage";
 import TargetCompaniesPage from "./pages/TargetCompaniesPage";
 import RecommendationsPage from "./pages/RecommendationsPage";
+import FollowersPage from "./pages/FollowersPage";
 
 function App() {
   return (
@@ -20,6 +21,7 @@ function App() {
           <Route path="/opportunities" element={<OpportunitiesPage />} />
           <Route path="/recommendations" element={<RecommendationsPage />} />
           <Route path="/target-companies" element={<TargetCompaniesPage />} />
+          <Route path="/followers" element={<FollowersPage />} />
         </Route>
       </Routes>
     </BrowserRouter>

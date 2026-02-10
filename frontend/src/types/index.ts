@@ -213,3 +213,66 @@ export interface RecommendationsResponse {
   total_eligible: number;
   generated_at: string;
 }
+
+// ============================================================================
+// Follower Types
+// ============================================================================
+
+export interface FollowerCandidate {
+  name: string;
+  headline: string;
+  profile_url: string;
+  location: string;
+  company: string;
+  about: string;
+  segments: string[];
+}
+
+export interface ScanStats {
+  followers_scraped: number;
+  already_in_db: number;
+  profiles_enriched: number;
+  profiles_failed: number;
+  matched_mujertech: number;
+  matched_cascadia: number;
+  matched_job_target: number;
+  no_segment: number;
+}
+
+export interface ScanResponse {
+  candidates: FollowerCandidate[];
+  stats: ScanStats;
+}
+
+export interface CandidateWithNote extends FollowerCandidate {
+  note: string;
+}
+
+export interface GenerateNotesResponse {
+  candidates: CandidateWithNote[];
+}
+
+export interface ConnectResult {
+  success: boolean;
+  status: string;
+  profile_url: string;
+  error: string | null;
+  name: string;
+  segments: string[];
+  note_sent: string;
+  note_for_manual: string;
+}
+
+export interface ConnectStats {
+  total: number;
+  sent: number;
+  already_connected: number;
+  already_pending: number;
+  failed: number;
+  note_not_supported: number;
+}
+
+export interface ConnectResponse {
+  results: ConnectResult[];
+  stats: ConnectStats;
+}

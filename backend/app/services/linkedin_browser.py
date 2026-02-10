@@ -188,9 +188,9 @@ class LinkedInBrowser:
 
     async def _navigate_with_delay(self, url: str, wait_until: str = "domcontentloaded") -> None:
         """Navigate to a URL with human-like delays before and after."""
-        await random_delay(0.5, 1.5)  # Pre-navigation delay
+        await random_delay(0.3, 0.8)  # Pre-navigation delay
         await self._page.goto(url, wait_until=wait_until, timeout=15000)
-        await random_delay(1.0, 2.5)  # Post-navigation delay (reading time)
+        await random_delay(0.5, 1.2)  # Post-navigation delay (reading time)
 
     async def is_logged_in(self) -> bool:
         """Check if we have a valid authenticated session."""
@@ -471,69 +471,99 @@ class LinkedInBrowser:
         await self._navigate_with_delay(profile_url)
 
         # Scroll down to load lazy content
-        for _ in range(3):
-            await self._human_scroll(600, steps=3)
-            await random_delay(0.5, 1.0)
+        for _ in range(2):
+            await self._human_scroll(800, steps=2)
+            await random_delay(0.3, 0.6)
 
         try:
             profile = {}
 
-            # Name - usually in h1
-            name_el = await self._page.query_selector('h1.text-heading-xlarge')
-            if name_el:
-                profile["name"] = (await name_el.inner_text()).strip()
-            else:
-                # Fallback selector
-                name_el = await self._page.query_selector('h1')
-                profile["name"] = (await name_el.inner_text()).strip() if name_el else ""
+            # Name - try multiple selectors
+            name = ""
+            for sel in ['h1.text-heading-xlarge', 'h1[class*="heading"]', 'h1']:
+                el = await self._page.query_selector(sel)
+                if el:
+                    name = (await el.inner_text()).strip()
+                    if name:
+                        break
+            profile["name"] = name
 
             # Headline - below the name
-            headline_el = await self._page.query_selector('div.text-body-medium.break-words')
-            if headline_el:
-                profile["headline"] = (await headline_el.inner_text()).strip()
-            else:
-                profile["headline"] = ""
+            headline = ""
+            for sel in [
+                'div.text-body-medium.break-words',
+                'div[class*="text-body-medium"]',
+                'div[data-generated-suggestion-target]',
+                '.pv-text-details__left-panel div:nth-child(2)',
+            ]:
+                el = await self._page.query_selector(sel)
+                if el:
+                    headline = (await el.inner_text()).strip()
+                    if headline:
+                        break
+            profile["headline"] = headline
 
             # Location
-            location_el = await self._page.query_selector('span.text-body-small.inline.t-black--light.break-words')
-            if location_el:
-                profile["location"] = (await location_el.inner_text()).strip()
-            else:
-                profile["location"] = ""
+            location = ""
+            for sel in [
+                'span.text-body-small.inline.t-black--light.break-words',
+                'span[class*="text-body-small"][class*="break-words"]',
+                '.pv-text-details__left-panel span[class*="text-body-small"]',
+            ]:
+                el = await self._page.query_selector(sel)
+                if el:
+                    location = (await el.inner_text()).strip()
+                    if location:
+                        break
+            profile["location"] = location
 
             # About section
-            about_section = await self._page.query_selector('section:has(#about) div.display-flex.full-width')
-            if about_section:
-                about_text = await about_section.inner_text()
-                profile["about"] = about_text.strip()[:500]  # Limit length
-            else:
-                profile["about"] = ""
+            about = ""
+            for sel in [
+                'section:has(#about) div.display-flex.full-width',
+                'section:has(#about) span[class*="visually-hidden"] ~ span',
+                'section:has(#about) div[class*="inline-show-more-text"]',
+                '#about ~ div',
+            ]:
+                el = await self._page.query_selector(sel)
+                if el:
+                    about = (await el.inner_text()).strip()
+                    if about:
+                        break
+            profile["about"] = about[:500]
 
             # Current company - from the intro card
-            company_el = await self._page.query_selector('div.inline-show-more-text--is-collapsed button[aria-label*="Current company"]')
-            if company_el:
-                profile["company"] = (await company_el.inner_text()).strip()
-            else:
-                # Try alternative: first experience entry
-                exp_company = await self._page.query_selector('section:has(#experience) li div.display-flex.flex-column span[aria-hidden="true"]')
-                if exp_company:
-                    profile["company"] = (await exp_company.inner_text()).strip()
-                else:
-                    profile["company"] = ""
+            company = ""
+            for sel in [
+                'div.inline-show-more-text--is-collapsed button[aria-label*="Current company"]',
+                'button[aria-label*="Current company"]',
+                'div[aria-label*="Current company"]',
+                'section:has(#experience) li:first-child span[aria-hidden="true"]',
+            ]:
+                el = await self._page.query_selector(sel)
+                if el:
+                    company = (await el.inner_text()).strip()
+                    if company:
+                        break
+            profile["company"] = company
 
             # Experience - get list of positions
             experience = []
             exp_items = await self._page.query_selector_all('section:has(#experience) li.artdeco-list__item')
-            for item in exp_items[:5]:  # Limit to 5 most recent
+            if not exp_items:
+                exp_items = await self._page.query_selector_all('section:has(#experience) li[class*="list__item"]')
+            for item in exp_items[:5]:
                 try:
                     title_el = await item.query_selector('div.display-flex.flex-wrap span[aria-hidden="true"]')
+                    if not title_el:
+                        title_el = await item.query_selector('span[aria-hidden="true"]')
                     company_el = await item.query_selector('span.t-14.t-normal span[aria-hidden="true"]')
 
                     title = (await title_el.inner_text()).strip() if title_el else ""
-                    company = (await company_el.inner_text()).strip() if company_el else ""
+                    company_name = (await company_el.inner_text()).strip() if company_el else ""
 
                     if title:
-                        experience.append({"title": title, "company": company})
+                        experience.append({"title": title, "company": company_name})
                 except Exception:
                     continue
             profile["experience"] = experience
@@ -541,9 +571,13 @@ class LinkedInBrowser:
             # Education - get list of schools
             education = []
             edu_items = await self._page.query_selector_all('section:has(#education) li.artdeco-list__item')
-            for item in edu_items[:3]:  # Limit to 3
+            if not edu_items:
+                edu_items = await self._page.query_selector_all('section:has(#education) li[class*="list__item"]')
+            for item in edu_items[:3]:
                 try:
                     school_el = await item.query_selector('div.display-flex.flex-wrap span[aria-hidden="true"]')
+                    if not school_el:
+                        school_el = await item.query_selector('span[aria-hidden="true"]')
                     degree_el = await item.query_selector('span.t-14.t-normal span[aria-hidden="true"]')
 
                     school = (await school_el.inner_text()).strip() if school_el else ""
@@ -557,12 +591,230 @@ class LinkedInBrowser:
 
             profile["profile_url"] = profile_url
 
-            logger.info(f"Scraped profile: {profile.get('name', 'Unknown')}")
+            logger.info(f"Scraped profile: {profile.get('name', 'Unknown')} | headline={bool(headline)} | location={bool(location)} | company={bool(company)}")
             return profile
 
         except Exception as e:
             logger.error(f"Error scraping profile: {e}")
             return None
+
+    async def _human_type(self, text: str, min_delay: float = 0.03, max_delay: float = 0.12) -> None:
+        """Type text character by character with random delays to simulate human typing."""
+        for char in text:
+            await self._page.keyboard.type(char)
+            await asyncio.sleep(random.uniform(min_delay, max_delay))
+
+    async def send_connection_request(self, profile_url: str, note: str = "") -> dict:
+        """
+        Send a connection request to a LinkedIn profile with an optional personalized note.
+
+        Args:
+            profile_url: Full URL to the LinkedIn profile
+            note: Optional personalized connection note (max 300 chars, will be truncated)
+
+        Returns:
+            dict with keys:
+                success (bool): Whether the request was sent
+                status (str): "sent", "already_connected", "already_pending", or "failed"
+                profile_url (str): The profile URL
+                error (str | None): Error message if failed
+        """
+        logger.info(f"Sending connection request to: {profile_url}")
+
+        result = {
+            "success": False,
+            "status": "failed",
+            "profile_url": profile_url,
+            "error": None,
+        }
+
+        try:
+            # Navigate to profile with human-like delays
+            await self._navigate_with_delay(profile_url)
+            await self._human_scroll(300, steps=2)
+            await random_delay(0.5, 1.5)
+
+            # --- Detect current relationship status ---
+
+            # Check if already connected (primary action is "Message")
+            message_btn = await self._page.query_selector(
+                'main button[aria-label*="Message"]'
+            )
+            if message_btn and await message_btn.is_visible():
+                btn_text = (await message_btn.inner_text()).strip().lower()
+                if btn_text == "message":
+                    logger.info(f"Already connected: {profile_url}")
+                    result["status"] = "already_connected"
+                    return result
+
+            # Check if invitation already pending
+            pending_btn = await self._page.query_selector(
+                'main button[aria-label*="Pending"]'
+            )
+            if pending_btn and await pending_btn.is_visible():
+                logger.info(f"Invitation already pending: {profile_url}")
+                result["status"] = "already_pending"
+                return result
+
+            # --- Find the Connect button ---
+
+            connect_btn = None
+
+            # Try 1: Direct Connect button with aria-label (most reliable)
+            connect_btn = await self._page.query_selector(
+                'main button[aria-label*="Invite"][aria-label*="connect"]'
+            )
+            if connect_btn and not await connect_btn.is_visible():
+                connect_btn = None
+
+            # Try 2: Button in the profile actions area with exact text
+            if not connect_btn:
+                action_buttons = await self._page.query_selector_all(
+                    'main section button'
+                )
+                for btn in action_buttons:
+                    btn_text = (await btn.inner_text()).strip()
+                    if btn_text == "Connect" and await btn.is_visible():
+                        connect_btn = btn
+                        break
+
+            # Try 3: Look inside the "More" dropdown
+            if not connect_btn:
+                logger.debug("Connect button not visible, checking More dropdown")
+                more_btn = await self._page.query_selector(
+                    'main button[aria-label="More actions"]'
+                )
+                if more_btn and await more_btn.is_visible():
+                    await random_delay(0.3, 0.8)
+                    await more_btn.click()
+                    await random_delay(0.5, 1.0)
+
+                    # Find "Connect" option in the dropdown menu
+                    dropdown_items = await self._page.query_selector_all(
+                        'div[role="listbox"] div[role="option"], '
+                        'ul[role="menu"] li, '
+                        'div.artdeco-dropdown__content li'
+                    )
+                    for item in dropdown_items:
+                        item_text = (await item.inner_text()).strip()
+                        if "Connect" in item_text and "Connected" not in item_text:
+                            connect_btn = item
+                            logger.debug("Found Connect in More dropdown")
+                            break
+
+                    # Close dropdown if Connect not found there
+                    if not connect_btn:
+                        await self._page.keyboard.press("Escape")
+                        await random_delay(0.2, 0.5)
+
+            if not connect_btn:
+                logger.warning(f"Connect button not found: {profile_url}")
+                await self.save_debug_snapshot("connect_btn_not_found")
+                result["error"] = "Connect button not found on profile"
+                return result
+
+            # --- Click Connect ---
+
+            await random_delay(0.5, 1.0)
+            await connect_btn.click()
+            await random_delay(1.0, 2.0)
+
+            # --- Handle the connection modal ---
+
+            if note:
+                # Truncate to LinkedIn's 300-character limit
+                note = note[:300]
+
+                # Look for "Add a note" button in the modal
+                add_note_btn = None
+                add_note_selectors = [
+                    'button[aria-label="Add a note"]',
+                    'button:has-text("Add a note")',
+                ]
+                for selector in add_note_selectors:
+                    add_note_btn = await self._page.query_selector(selector)
+                    if add_note_btn and await add_note_btn.is_visible():
+                        break
+                    add_note_btn = None
+
+                if add_note_btn:
+                    await random_delay(0.3, 0.8)
+                    await add_note_btn.click()
+                    await random_delay(0.5, 1.0)
+
+                    # Find the textarea and type the note like a human
+                    textarea = None
+                    textarea_selectors = [
+                        'textarea[name="message"]',
+                        'textarea#custom-message',
+                        'textarea',
+                    ]
+                    for selector in textarea_selectors:
+                        textarea = await self._page.query_selector(selector)
+                        if textarea and await textarea.is_visible():
+                            break
+                        textarea = None
+
+                    if textarea:
+                        await textarea.click()
+                        await random_delay(0.2, 0.5)
+                        await self._human_type(note)
+                        await random_delay(0.5, 1.0)
+                    else:
+                        logger.warning("Note textarea not found")
+                        await self.save_debug_snapshot("note_textarea_not_found")
+                        await self._page.keyboard.press("Escape")
+                        result["status"] = "note_not_supported"
+                        result["error"] = "Could not add note — textarea not found. Send manually."
+                        return result
+                else:
+                    logger.warning("'Add a note' button not found")
+                    await self._page.keyboard.press("Escape")
+                    result["status"] = "note_not_supported"
+                    result["error"] = "Could not add note — button not found. Send manually with the note below."
+                    return result
+
+            # --- Click Send ---
+
+            send_btn = None
+            send_selectors = [
+                'button[aria-label="Send invitation"]',
+                'button[aria-label="Send now"]',
+                'button:has-text("Send")',
+            ]
+            for selector in send_selectors:
+                send_btn = await self._page.query_selector(selector)
+                if send_btn and await send_btn.is_visible():
+                    break
+                send_btn = None
+
+            if not send_btn:
+                logger.warning("Send button not found in modal")
+                await self.save_debug_snapshot("send_btn_not_found")
+                # Try pressing Escape to close modal
+                await self._page.keyboard.press("Escape")
+                result["error"] = "Send button not found in modal"
+                return result
+
+            await random_delay(0.3, 0.8)
+            await send_btn.click()
+            await random_delay(1.5, 3.0)
+
+            logger.info(f"Connection request sent to: {profile_url}")
+            result["success"] = True
+            result["status"] = "sent"
+            return result
+
+        except PlaywrightTimeout as e:
+            logger.error(f"Timeout sending connection request: {e}")
+            await self.save_debug_snapshot("connect_timeout")
+            result["error"] = f"Timeout: {e}"
+            return result
+        except Exception as e:
+            logger.error(f"Error sending connection request: {e}")
+            await self.save_debug_snapshot("connect_error")
+            result["error"] = str(e)
+            return result
 
     async def save_debug_snapshot(self, name: str) -> Path:
         """

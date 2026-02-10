@@ -12,8 +12,12 @@ logging.basicConfig(
 async def main():
     async with LinkedInBrowser() as browser:
         if not await browser.is_logged_in():
-            print("Not logged in. Run manual login first.")
-            return
+            print("Not logged in. Starting manual login...")
+            success = await browser.manual_login()
+            if not success:
+                print("Login failed. Exiting.")
+                return
+            print("Login successful! Cookies saved.\n")
 
         # Test connections with pagination (max 50)
         print("\nScraping connections (max 50)...")
