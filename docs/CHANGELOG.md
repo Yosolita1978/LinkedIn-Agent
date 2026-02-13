@@ -4,6 +4,51 @@ All notable changes to this project are documented here.
 
 ---
 
+## [0.9.0] - 2026-02-12
+
+### Remotion Showcase Video + Claude Code Skill
+
+#### Added — Remotion Video Project (`video/`)
+
+- **Programmatic showcase video** built with Remotion v4 (React-based video framework)
+  - 36-second highlight reel at 1920x1080, 30fps
+  - 6 animated scenes with `TransitionSeries` (fade + slide transitions)
+  - Recreated simplified versions of the real app UI — no screenshots, all React components
+  - Dark theme matching the real frontend (slate-900 bg, same warmth colors)
+
+- **6 Scenes:**
+  1. **Intro** (4s) — Logo + tagline with glow effect, spring animation
+  2. **Dashboard** (9s) — 6 stat cards stagger in, warmth distribution bar grows, segment bar, top contacts list
+  3. **Contact Detail** (9s) — "Maria Rodriguez" HOT 92, 5 warmth breakdown bars animate from 0% to target width (hero animation)
+  4. **Opportunities** (6s) — 3 resurrection hook cards, cursor switches "Dormant" tab, clicks "Generate & Queue"
+  5. **AI Generation** (7s) — Click Generate → spinner → typing animation writes personalized message → select variation → Add to Queue → success banner
+  6. **Outro** (3.5s) — Logo + tech stack attribution
+
+- **Shared Components:**
+  - `LaptopMockup.tsx` — CSS browser chrome (traffic lights, URL bar) + sidebar with real nav icons
+  - `FadeIn.tsx` — Reusable staggered opacity + translateY animation
+  - `TypingAnimation.tsx` — Character-by-character typewriter with blinking cursor
+  - `CursorClick.tsx` — Animated cursor movement with click ripple effect (spring physics)
+  - `theme.ts` — All colors matching the real app
+
+- **Project structure:** `video/` folder alongside `backend/` and `frontend/`
+  - Remotion v4, React 19, TypeScript
+  - `npm run studio` for browser preview, `npm run render` for MP4 output
+
+#### Added — Claude Code Skill (`/render-video`)
+
+- **`.claude/skills/render-video/SKILL.md`** — Custom slash command for rendering
+  - `/render-video` — Render with defaults (H.264, 1080p)
+  - `/render-video --codec gif --scale 0.5` — Custom codec/scale
+  - Installs deps automatically if needed
+  - Reports output file path and size
+
+#### Added — Quick Start Guide
+
+- **`QUICKSTART.md`** at project root — Short guide on how to start the project locally (backend + frontend)
+
+---
+
 ## [0.8.0] - 2026-02-09
 
 ### Phase 5 Complete: Follower Connection Automation + UX Improvements
@@ -314,3 +359,4 @@ Major milestone - the backend intelligence system is now fully functional.
 | 0.4.0 | Feb 6, 2026 | OpenAI + Queue workflow |
 | 0.5.0 | Feb 6, 2026 | Frontend dashboard (dark theme) |
 | 0.8.0 | Feb 9, 2026 | Follower automation + Voyager API + Dashboard/Queue UX |
+| 0.9.0 | Feb 12, 2026 | Remotion showcase video + /render-video Claude skill + QUICKSTART.md |

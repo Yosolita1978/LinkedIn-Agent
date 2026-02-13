@@ -1,7 +1,7 @@
 # LinkedIn Intelligence & Outreach Agent - Progress Report
 
-**Date**: February 9, 2026
-**Status**: Backend + Frontend + Contact Ranking + Follower Automation Complete
+**Date**: February 12, 2026
+**Status**: Backend + Frontend + Contact Ranking + Follower Automation + Showcase Video Complete
 
 ---
 
@@ -257,6 +257,16 @@ From your LinkedIn export:
 - [x] Dashboard stat cards: clickable, navigate to relevant pages
 - [x] Queue: AI message regeneration with custom instructions ("make it about Cascadia")
 - [x] Queue: text input + Regenerate button in edit mode
+
+### Phase 5c: Showcase Video + Developer Experience — DONE
+- [x] Remotion v4 project in `video/` (36-second animated showcase, 1920x1080, 30fps)
+- [x] 6 scenes: Intro, Dashboard, Contact Detail, Opportunities, AI Generation, Outro
+- [x] Recreated UI as React components (laptop mockup, sidebar, warmth badges, animated bars)
+- [x] Simulated interactions: cursor clicks, typing animation, tab switching, success banners
+- [x] `TransitionSeries` with fade + slide transitions between scenes
+- [x] Shared components: LaptopMockup, FadeIn, TypingAnimation, CursorClick, theme
+- [x] Claude Code skill: `/render-video` — renders video from CLI with optional codec/scale args
+- [x] `QUICKSTART.md` — local setup guide (backend + frontend)
 
 ### Phase 6: End-to-End Testing & Polish — NEXT
 - [ ] Full end-to-end test of follower connection pipeline with real LinkedIn cookies

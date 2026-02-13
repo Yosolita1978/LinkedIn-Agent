@@ -258,6 +258,14 @@ linkedin-outreach-agent/
 │   │   ├── pages/               # 7 route pages
 │   │   └── types/               # TypeScript interfaces
 │   └── index.html
+├── video/
+│   ├── src/
+│   │   ├── DemoVideo.tsx            # Main composition (TransitionSeries)
+│   │   ├── components/              # LaptopMockup, FadeIn, TypingAnimation, CursorClick
+│   │   └── scenes/                  # 6 animated scenes (Intro → Outro)
+│   └── package.json                 # Remotion v4
+├── .claude/
+│   └── skills/render-video/         # /render-video Claude Code skill
 └── docs/
     ├── ARCHITECTURE.md          # System design
     ├── PROGRESS.md              # Build progress
