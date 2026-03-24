@@ -54,6 +54,7 @@ export interface ResurrectionOpportunitySummary {
 export interface ContactDetail extends Contact {
   about: string | null;
   email: string | null;
+  notes: string | null;
   experience: Record<string, unknown>[] | null;
   education: Record<string, unknown>[] | null;
   connection_date: string | null;
@@ -143,6 +144,9 @@ export interface QueueStats {
   total: number;
   by_status: Record<string, number>;
   by_use_case: Record<string, number>;
+  sent_today: number;
+  daily_limit: number;
+  remaining_today: number;
 }
 
 export interface QueueItemCreate {

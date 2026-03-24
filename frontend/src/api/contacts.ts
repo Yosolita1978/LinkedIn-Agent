@@ -44,6 +44,14 @@ export function fetchTopWarmth(limit: number = 10): Promise<TopWarmthContact[]> 
   return apiFetch<TopWarmthContact[]>(`/api/contacts/top-warmth?limit=${limit}`);
 }
 
+export function updateContactNotes(id: string, notes: string): Promise<{ status: string; notes: string | null }> {
+  return apiFetch(`/api/contacts/${id}/tags`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ notes }),
+  });
+}
+
 export interface SegmentationResult {
   status: string;
   contacts_processed: number;

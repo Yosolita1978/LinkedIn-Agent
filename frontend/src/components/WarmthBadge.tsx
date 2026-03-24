@@ -35,9 +35,17 @@ export default function WarmthBadge({ score, size = "md" }: WarmthBadgeProps) {
     lg: "px-3 py-1 text-base font-semibold",
   };
 
+  const label = score >= 70 ? "Hot" : score >= 40 ? "Warm" : score >= 10 ? "Cool" : "Cold";
+
   return (
-    <span className={`inline-flex items-center rounded-full font-medium ${bgColor} ${textColor} ${sizeClasses[size]}`}>
+    <span
+      className={`inline-flex items-center rounded-full font-medium ${bgColor} ${textColor} ${sizeClasses[size]} relative group cursor-default`}
+      title={`Warmth: ${score}/100 (${label})`}
+    >
       {score}
+      <span className="absolute bottom-full right-0 mb-2 px-2 py-1 bg-slate-900 border border-slate-600 rounded text-xs text-slate-300 whitespace-nowrap opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-10 shadow-lg">
+        Warmth: {score}/100 ({label})
+      </span>
     </span>
   );
 }

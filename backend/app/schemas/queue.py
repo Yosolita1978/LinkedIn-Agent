@@ -71,3 +71,6 @@ class QueueStatsResponse(BaseModel):
     total: int
     by_status: dict[str, int]
     by_use_case: dict[str, int]
+    sent_today: int = 0
+    daily_limit: int = 50
+    remaining_today: int = 50

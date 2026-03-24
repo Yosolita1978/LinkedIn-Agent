@@ -33,6 +33,11 @@ class Message(Base):
 
     # LinkedIn metadata
     conversation_id: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    linkedin_message_id: Mapped[Optional[str]] = mapped_column(Text, nullable=True, unique=True)
+
+    # Inbox sync
+    synced_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    needs_reply: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
 
     # Record timestamp
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

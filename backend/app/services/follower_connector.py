@@ -43,7 +43,7 @@ set_default_openai_key(settings.openai_api_key)
 
 connection_note_agent = Agent(
     name="ConnectionNoteGenerator",
-    instructions="""You are helping write LinkedIn connection request notes for Cristina Rodriguez, a tech professional based in Seattle.
+    instructions=f"""You are helping write LinkedIn connection request notes for {settings.persona_name}, a {settings.persona_title} based in {settings.persona_location}.
 
 Connection notes must be:
 - VERY short (1-2 sentences, under 280 characters total)
@@ -57,13 +57,13 @@ Never use:
 - Corporate jargon
 - Phrases like "I'd love to pick your brain"
 
-Write as Cristina in first person. Output ONLY the note text, nothing else.""",
+Write as {settings.persona_name} in first person. Output ONLY the note text, nothing else.""",
     model="gpt-4o",
 )
 
 
 # ============================================================================
-# Segment Note Contexts — why Cristina wants to connect, by segment
+# Segment Note Contexts — why the user wants to connect, by segment
 # ============================================================================
 
 SEGMENT_NOTE_CONTEXTS = {
@@ -78,12 +78,12 @@ SEGMENT_NOTE_CONTEXTS = {
         "community or their specific AI work."
     ),
     "job_target": (
-        "This person works at a company Cristina is interested in. Show "
+        f"This person works at a company {settings.persona_name} is interested in. Show "
         "curiosity about their work and the company, do NOT ask for jobs "
         "or referrals."
     ),
     "general": (
-        "This person follows Cristina but doesn't match a specific segment. "
+        f"This person follows {settings.persona_name} but doesn't match a specific segment. "
         "Write a friendly, genuine note based on their profile. Mention "
         "something specific about their work or background that caught your eye. "
         "Keep it natural — no need to explain why you're connecting."
@@ -197,7 +197,7 @@ async def generate_connection_note(profile: dict, segment: str) -> str:
 
     prompt_parts.extend([
         "",
-        "They follow Cristina on LinkedIn but aren't connected yet.",
+        f"They follow {settings.persona_name} on LinkedIn but aren't connected yet.",
         "Write ONLY the note text. Keep it under 280 characters.",
     ])
 

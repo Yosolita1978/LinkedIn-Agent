@@ -8,14 +8,39 @@ Manages the outreach queue workflow:
 - Query and filter queue items
 """
 
-from datetime import datetime
+from datetime import datetime, date
 from typing import Optional
 from uuid import UUID
 
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import get_settings
 from app.models import OutreachQueueItem, Contact, ResurrectionOpportunity
+
+
+settings = get_settings()
+
+
+async def get_today_sent_count(db: AsyncSession) -> int:
+    """Count how many messages were sent today."""
+    stmt = (
+        select(func.count(OutreachQueueItem.id))
+        .where(OutreachQueueItem.status == "sent")
+        .where(func.date(OutreachQueueItem.sent_at) == date.today())
+    )
+    result = await db.execute(stmt)
+    return result.scalar() or 0
+
+
+async def check_rate_limit(db: AsyncSession) -> None:
+    """Raise ValueError if daily send limit has been reached."""
+    sent_today = await get_today_sent_count(db)
+    if sent_today >= settings.rate_limit_messages_per_day:
+        raise ValueError(
+            f"Daily message limit reached ({sent_today}/{settings.rate_limit_messages_per_day}). "
+            f"Try again tomorrow."
+        )
 
 
 # Valid status transitions
@@ -110,6 +135,10 @@ async def update_status(
             f"Cannot transition from '{item.status}' to '{new_status}'. "
             f"Allowed: {allowed}"
         )
+
+    # Enforce rate limit when marking as sent
+    if new_status == "sent":
+        await check_rate_limit(db)
 
     item.status = new_status
 
@@ -276,8 +305,15 @@ async def get_queue_stats(db: AsyncSession) -> dict:
 
     total = sum(by_status.values())
 
+    # Rate limit info
+    sent_today = await get_today_sent_count(db)
+    daily_limit = settings.rate_limit_messages_per_day
+
     return {
         "total": total,
         "by_status": by_status,
         "by_use_case": by_use_case,
+        "sent_today": sent_today,
+        "daily_limit": daily_limit,
+        "remaining_today": max(0, daily_limit - sent_today),
     }

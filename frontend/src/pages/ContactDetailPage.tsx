@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useParams, Link } from "react-router-dom";
-import { fetchContactDetail } from "../api/contacts";
+import { fetchContactDetail, updateContactNotes } from "../api/contacts";
 import { generateMessage, fetchPurposes } from "../api/generate";
 import { addToQueue } from "../api/queue";
 import type { ContactDetail, Purpose, GenerateResponse } from "../types";
@@ -24,6 +24,12 @@ export default function ContactDetailPage() {
   const [genError, setGenError] = useState<string | null>(null);
   const [selectedVariation, setSelectedVariation] = useState<number | null>(null);
 
+  // Notes state
+  const [notesValue, setNotesValue] = useState("");
+  const [notesEditing, setNotesEditing] = useState(false);
+  const [notesSaving, setNotesSaving] = useState(false);
+  const [notesSaved, setNotesSaved] = useState(false);
+
   // Queue state
   const [queueing, setQueueing] = useState(false);
   const [queueSuccess, setQueueSuccess] = useState(false);
@@ -38,12 +44,31 @@ export default function ContactDetailPage() {
       .then(([contactData, purposeData]) => {
         setContact(contactData);
         setPurposes(purposeData.purposes);
+        setNotesValue(contactData.notes || "");
       })
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false));
   }
 
   useEffect(() => { loadData(); }, [id]);
+
+  function handleSaveNotes() {
+    if (!id) return;
+    setNotesSaving(true);
+    setNotesSaved(false);
+
+    updateContactNotes(id, notesValue)
+      .then(() => {
+        setNotesSaved(true);
+        setNotesEditing(false);
+        if (contact) {
+          setContact({ ...contact, notes: notesValue });
+        }
+        setTimeout(() => setNotesSaved(false), 2000);
+      })
+      .catch((err) => setError(err.message))
+      .finally(() => setNotesSaving(false));
+  }
 
   function handleGenerate() {
     if (!id) return;
@@ -135,6 +160,59 @@ export default function ContactDetailPage() {
 
         {contact.about && (
           <p className="text-sm text-slate-400 mt-4 border-t border-slate-700 pt-4">{contact.about}</p>
+        )}
+      </div>
+
+      {/* Notes */}
+      <div className="bg-slate-800 rounded-lg border border-slate-700 p-4 mb-6">
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-sm font-medium text-slate-400">Notes</h2>
+          {!notesEditing && (
+            <button
+              onClick={() => setNotesEditing(true)}
+              className="text-xs text-blue-400 hover:text-blue-300"
+            >
+              {contact.notes ? "Edit" : "Add notes"}
+            </button>
+          )}
+        </div>
+
+        {notesEditing ? (
+          <div>
+            <textarea
+              value={notesValue}
+              onChange={(e) => setNotesValue(e.target.value)}
+              placeholder="e.g. Met at PyCon, wants to collaborate on AI project..."
+              rows={3}
+              className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-lg text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+            <div className="flex gap-2 mt-2">
+              <button
+                onClick={handleSaveNotes}
+                disabled={notesSaving}
+                className="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-xs font-medium hover:bg-blue-500 disabled:opacity-50"
+              >
+                {notesSaving ? "Saving..." : "Save"}
+              </button>
+              <button
+                onClick={() => {
+                  setNotesEditing(false);
+                  setNotesValue(contact.notes || "");
+                }}
+                className="px-3 py-1.5 bg-slate-700 text-slate-300 rounded-lg text-xs font-medium hover:bg-slate-600"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        ) : contact.notes ? (
+          <p className="text-sm text-slate-300 whitespace-pre-wrap">{contact.notes}</p>
+        ) : (
+          <p className="text-sm text-slate-500 italic">No notes yet</p>
+        )}
+
+        {notesSaved && (
+          <p className="text-xs text-green-400 mt-2">Notes saved!</p>
         )}
       </div>
 

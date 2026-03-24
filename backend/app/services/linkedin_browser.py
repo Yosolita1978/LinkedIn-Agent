@@ -223,10 +223,31 @@ class LinkedInBrowser:
             logger.info("Not logged in - redirected to login/checkpoint")
             return False
 
-        feed_indicator = await self._page.query_selector("div.feed-shared-update-v2")
-        is_logged = feed_indicator is not None
-        logger.info(f"Login status: {'authenticated' if is_logged else 'not authenticated'}")
-        return is_logged
+        # If we're on the feed page and not redirected to login, we're logged in.
+        # Try multiple selectors as LinkedIn changes their DOM frequently.
+        feed_selectors = [
+            "div.feed-shared-update-v2",
+            "div[data-urn*='activity']",
+            "nav.global-nav",
+            "div.scaffold-layout",
+            "header.global-nav",
+            "div#global-nav",
+            "input[class*='search']",
+        ]
+
+        for selector in feed_selectors:
+            indicator = await self._page.query_selector(selector)
+            if indicator:
+                logger.info(f"Login verified via selector: {selector}")
+                return True
+
+        # Final fallback: if URL is /feed/ and no redirect happened, consider logged in
+        if "/feed" in current_url:
+            logger.info("Login assumed from URL (no matching DOM selectors found)")
+            return True
+
+        logger.info("Not authenticated - no feed indicators found")
+        return False
 
     async def get_own_profile_url(self) -> str | None:
         """Get the authenticated user's own profile URL from the nav bar."""
@@ -877,6 +898,226 @@ class LinkedInBrowser:
 
         logger.info(f"Saved debug snapshot to {debug_dir}/{name}_debug.*")
         return debug_dir
+
+    MESSAGING_URL = "https://www.linkedin.com/messaging/"
+
+    async def scrape_inbox_conversations(self, max_items: int = 40) -> list[dict]:
+        """
+        Scrape the messaging inbox conversation list.
+
+        Returns list of dicts with: participant_name, last_message_preview,
+        timestamp_text, profile_url, conversation_link.
+        """
+        logger.info(f"Scraping inbox conversations (max {max_items})")
+
+        await self._navigate_with_delay(self.MESSAGING_URL)
+
+        # Wait for conversation list to load
+        try:
+            await self._page.wait_for_selector(
+                "li.msg-conversation-listitem", timeout=10000
+            )
+        except PlaywrightTimeout:
+            logger.error("Messaging conversation list not found")
+            raise ScrapingError("Could not find messaging conversation list")
+
+        await random_delay(1.0, 2.0)
+
+        conversations = []
+        seen = set()
+        no_new_count = 0
+
+        for scroll_attempt in range(20):
+            items = await self._page.query_selector_all("li.msg-conversation-listitem")
+            initial_count = len(conversations)
+
+            for item in items:
+                if len(conversations) >= max_items:
+                    break
+
+                conv = await self._extract_conversation_item(item)
+                if conv and conv["participant_name"] not in seen:
+                    seen.add(conv["participant_name"])
+                    conversations.append(conv)
+
+            if len(conversations) >= max_items:
+                break
+
+            new_items = len(conversations) - initial_count
+            if new_items == 0:
+                no_new_count += 1
+                if no_new_count >= 3:
+                    break
+            else:
+                no_new_count = 0
+
+            # Scroll the conversation list sidebar
+            list_container = await self._page.query_selector(
+                "ul.msg-conversations-container__conversations-list"
+            )
+            if list_container:
+                await list_container.evaluate(
+                    "el => el.scrollBy(0, 400)"
+                )
+                await random_delay(1.0, 2.0)
+            else:
+                break
+
+        logger.info(f"Scraped {len(conversations)} inbox conversations")
+        return conversations
+
+    async def _extract_conversation_item(self, item) -> dict | None:
+        """Extract data from a single conversation list item."""
+        try:
+            # Participant name
+            name_el = await item.query_selector(
+                ".msg-conversation-listitem__participant-names, "
+                ".msg-conversation-card__participant-names"
+            )
+            name = (await name_el.inner_text()).strip() if name_el else ""
+            if not name:
+                return None
+
+            # Skip sponsored/InMail
+            pill_el = await item.query_selector(".msg-conversation-card__pill")
+            if pill_el:
+                pill_text = (await pill_el.inner_text()).strip().lower()
+                if "sponsored" in pill_text:
+                    return None
+
+            # Timestamp
+            time_el = await item.query_selector(
+                ".msg-conversation-listitem__time-stamp, "
+                ".msg-conversation-card__time-stamp"
+            )
+            timestamp_text = (await time_el.inner_text()).strip() if time_el else ""
+
+            # Message preview
+            preview_el = await item.query_selector(
+                ".msg-conversation-card__message-snippet"
+            )
+            preview = (await preview_el.inner_text()).strip() if preview_el else ""
+
+            # Conversation link (clicking opens the thread)
+            link_el = await item.query_selector(
+                "a.msg-conversation-listitem__link"
+            )
+            href = ""
+            if link_el:
+                href = await link_el.get_attribute("href") or ""
+
+            return {
+                "participant_name": name,
+                "last_message_preview": preview,
+                "timestamp_text": timestamp_text,
+                "conversation_link": href,
+            }
+        except Exception as e:
+            logger.debug(f"Error extracting conversation item: {e}")
+            return None
+
+    async def scrape_conversation_messages(self, conversation_index: int = 0) -> list[dict]:
+        """
+        Click on a conversation in the list and scrape messages from the thread.
+
+        Args:
+            conversation_index: Which conversation to click (0-based index in the list)
+
+        Returns list of dicts with: sender_name, body, timestamp_text, is_outgoing.
+        """
+        items = await self._page.query_selector_all("li.msg-conversation-listitem")
+        if conversation_index >= len(items):
+            logger.error(f"Conversation index {conversation_index} out of range (have {len(items)})")
+            return []
+
+        # Click the conversation
+        link = await items[conversation_index].query_selector(
+            "a.msg-conversation-listitem__link"
+        )
+        if link:
+            await link.click()
+        else:
+            await items[conversation_index].click()
+
+        await random_delay(1.5, 2.5)
+
+        # Wait for message thread to load
+        try:
+            await self._page.wait_for_selector(
+                "ul.msg-s-message-list, div.msg-s-message-list-content, "
+                "ul[class*='msg-s-message-list']",
+                timeout=8000,
+            )
+        except PlaywrightTimeout:
+            # Might be an InMail/sponsored thread with different structure
+            logger.debug("Standard message list not found, trying alternative selectors")
+
+        await random_delay(0.5, 1.0)
+
+        messages = []
+
+        # Try multiple selectors for message items
+        msg_selectors = [
+            "li.msg-s-message-list__event",
+            "div.msg-s-event-listitem",
+            "li[class*='msg-s-message-list']",
+            "div[class*='msg-s-event']",
+        ]
+
+        msg_items = []
+        for sel in msg_selectors:
+            msg_items = await self._page.query_selector_all(sel)
+            if msg_items:
+                logger.debug(f"Found {len(msg_items)} messages with: {sel}")
+                break
+
+        for msg_item in msg_items:
+            msg = await self._extract_message_item(msg_item)
+            if msg:
+                messages.append(msg)
+
+        logger.info(f"Scraped {len(messages)} messages from conversation")
+        return messages
+
+    async def _extract_message_item(self, item) -> dict | None:
+        """Extract data from a single message in a conversation thread."""
+        try:
+            # Sender name
+            sender_el = await item.query_selector(
+                ".msg-s-message-group__name, "
+                "span.msg-s-message-group__profile-link, "
+                "a[class*='msg-s-message-group__profile-link']"
+            )
+            sender = (await sender_el.inner_text()).strip() if sender_el else ""
+
+            # Message body
+            body_el = await item.query_selector(
+                ".msg-s-event-listitem__body, "
+                "p.msg-s-event-listitem__body, "
+                "div[class*='msg-s-event-listitem__body']"
+            )
+            body = (await body_el.inner_text()).strip() if body_el else ""
+
+            if not body:
+                return None
+
+            # Timestamp
+            time_el = await item.query_selector(
+                "time.msg-s-message-group__timestamp, "
+                "time[class*='msg-s-message']"
+            )
+            timestamp = ""
+            if time_el:
+                timestamp = await time_el.get_attribute("datetime") or (await time_el.inner_text()).strip()
+
+            return {
+                "sender_name": sender,
+                "body": body,
+                "timestamp_text": timestamp,
+            }
+        except Exception as e:
+            logger.debug(f"Error extracting message: {e}")
+            return None
 
     @property
     def page(self) -> Page:

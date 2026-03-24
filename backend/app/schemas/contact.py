@@ -40,6 +40,7 @@ class ContactUpdate(BaseModel):
     experience: Optional[list[dict]] = None
     education: Optional[list[dict]] = None
     manual_tags: Optional[list[str]] = None
+    notes: Optional[str] = None
 
 
 class ContactResponse(BaseModel):
@@ -53,6 +54,7 @@ class ContactResponse(BaseModel):
     warmth_score: Optional[int] = None
     segment_tags: Optional[list[str]] = None
     manual_tags: Optional[list[str]] = None
+    notes: Optional[str] = None
     last_message_date: Optional[date] = None
     last_message_direction: Optional[str] = None
     total_messages: int = 0
@@ -110,6 +112,9 @@ class ContactDetailResponse(BaseModel):
     # Segmentation
     segment_tags: Optional[list[str]] = None
     manual_tags: Optional[list[str]] = None
+
+    # Notes
+    notes: Optional[str] = None
 
     # Message metadata (not content)
     message_metadata: Optional[MessageMetadata] = None

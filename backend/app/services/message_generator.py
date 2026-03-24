@@ -29,7 +29,7 @@ set_default_openai_key(settings.openai_api_key)
 # Create the message generation agent
 message_agent = Agent(
     name="LinkedInMessageGenerator",
-    instructions="""You are helping write LinkedIn messages for Cristina Rodriguez, a tech professional based in Seattle.
+    instructions=f"""You are helping write LinkedIn messages for {settings.persona_name}, a {settings.persona_title} based in {settings.persona_location}.
 
 Your messages should be:
 - Warm and authentic, not salesy or generic
@@ -45,7 +45,7 @@ Never use:
 - Buzzwords or corporate jargon
 - Phrases like "I'd love to pick your brain"
 
-Always write in first person as Cristina.""",
+Always write in first person as {settings.persona_name}.""",
     model="gpt-4o",
 )
 
@@ -55,15 +55,15 @@ Always write in first person as Cristina.""",
 # ============================================================================
 
 SEGMENT_CONTEXTS = {
-    "mujertech": """Context: This contact is part of the MujerTech community - women entrepreneurs and tech professionals in Latin America. Cristina runs this community to connect and support Latinas in tech.
+    "mujertech": f"""Context: This contact is part of the MujerTech community - women entrepreneurs and tech professionals in Latin America. {settings.persona_name} runs this community to connect and support Latinas in tech.
 
 Tone: Warm, supportive, community-focused. Can use Spanish phrases naturally if appropriate. Focus on mutual support and community connection.""",
 
-    "cascadia": """Context: This contact is part of the Cascadia AI community - AI/ML professionals in the Pacific Northwest (Seattle, Portland, Vancouver). Cristina is building this community to connect local AI practitioners.
+    "cascadia": f"""Context: This contact is part of the Cascadia AI community - AI/ML professionals in the Pacific Northwest (Seattle, Portland, Vancouver). {settings.persona_name} is building this community to connect local AI practitioners.
 
 Tone: Professional but friendly, tech-savvy. Focus on local AI community, knowledge sharing, and professional connection.""",
 
-    "job_target": """Context: This contact works at a company where Cristina is interested in opportunities. This is a networking message, not a job application.
+    "job_target": f"""Context: This contact works at a company where {settings.persona_name} is interested in opportunities. This is a networking message, not a job application.
 
 Tone: Professional, curious about their work. Focus on learning about their experience at the company, not asking for referrals directly.""",
 }
@@ -127,6 +127,9 @@ async def build_contact_context(db: AsyncSession, contact: Contact) -> str:
 
     if contact.connection_date:
         context_parts.append(f"Connected since: {contact.connection_date}")
+
+    if contact.notes:
+        context_parts.append(f"Personal notes about this person: {contact.notes}")
 
     return "\n".join(context_parts)
 

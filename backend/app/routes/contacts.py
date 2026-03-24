@@ -239,6 +239,7 @@ async def get_contact(
         "warmth_calculated_at": contact.warmth_calculated_at,
         "segment_tags": contact.segment_tags,
         "manual_tags": contact.manual_tags,
+        "notes": contact.notes,
         "message_metadata": MessageMetadata(
             total_messages=contact.total_messages,
             last_message_date=contact.last_message_date,
@@ -273,9 +274,12 @@ async def update_contact_tags(
     if update.manual_tags is not None:
         contact.manual_tags = update.manual_tags
 
+    if update.notes is not None:
+        contact.notes = update.notes
+
     await db.commit()
 
-    return {"status": "updated", "manual_tags": contact.manual_tags}
+    return {"status": "updated", "manual_tags": contact.manual_tags, "notes": contact.notes}
 
 
 @router.post("/recalculate-warmth")

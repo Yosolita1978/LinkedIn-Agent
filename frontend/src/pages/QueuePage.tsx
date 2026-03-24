@@ -107,6 +107,24 @@ export default function QueuePage() {
               <p className="text-xs text-slate-500 capitalize">{status}</p>
             </div>
           ))}
+          <div className={`px-3 py-1.5 border rounded-lg text-center ${
+            stats.remaining_today === 0
+              ? "bg-red-500/10 border-red-500/30"
+              : stats.remaining_today <= 10
+                ? "bg-amber-500/10 border-amber-500/30"
+                : "bg-slate-800 border-slate-700"
+          }`}>
+            <p className={`text-lg font-bold ${
+              stats.remaining_today === 0
+                ? "text-red-400"
+                : stats.remaining_today <= 10
+                  ? "text-amber-400"
+                  : "text-white"
+            }`}>
+              {stats.sent_today}/{stats.daily_limit}
+            </p>
+            <p className="text-xs text-slate-500">Sent Today</p>
+          </div>
         </div>
       )}
 

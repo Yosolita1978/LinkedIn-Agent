@@ -49,6 +49,9 @@ class Contact(Base):
         ARRAY(String), nullable=True
     )  # user overrides
 
+    # User notes (freeform text like "met at PyCon", "wants to collaborate on AI")
+    notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
     # Message stats (derived from messages table)
     total_messages: Mapped[int] = mapped_column(Integer, default=0)
     last_message_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True)

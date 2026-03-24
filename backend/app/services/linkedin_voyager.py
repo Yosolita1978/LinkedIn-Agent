@@ -355,3 +355,167 @@ class LinkedInVoyager:
             degree_str = f"{degree}, {field}" if degree and field else degree or field
             if school:
                 profile["education"].append({"school": school, "degree": degree_str})
+
+    # ── Messaging API ──
+
+    async def get_conversations(self, limit: int = 40) -> list[dict]:
+        """
+        Fetch recent conversations from LinkedIn messaging.
+        Returns a list of conversation dicts with participant info and last message.
+        """
+        url = f"{VOYAGER_BASE}/messaging/conversations"
+        params = {"keyVersion": "LEGACY_INBOX", "count": limit}
+
+        try:
+            resp = await self._client.get(url, params=params)
+            if resp.status_code != 200:
+                logger.error(f"Voyager conversations: HTTP {resp.status_code}")
+                return []
+            return self._parse_conversations(resp.json())
+        except Exception as e:
+            logger.error(f"Voyager conversations error: {e}")
+            return []
+
+    async def get_conversation_messages(
+        self, conversation_id: str, limit: int = 40
+    ) -> list[dict]:
+        """
+        Fetch messages (events) from a specific conversation.
+        Returns messages sorted oldest-first.
+        """
+        url = f"{VOYAGER_BASE}/messaging/conversations/{conversation_id}/events"
+        params = {"count": limit}
+
+        try:
+            resp = await self._client.get(url, params=params)
+            if resp.status_code != 200:
+                logger.error(f"Voyager events: HTTP {resp.status_code} for {conversation_id}")
+                return []
+            return self._parse_conversation_events(resp.json(), conversation_id)
+        except Exception as e:
+            logger.error(f"Voyager events error: {e}")
+            return []
+
+    def _parse_conversations(self, data: dict) -> list[dict]:
+        """Parse the /messaging/conversations response."""
+        conversations = []
+        elements = data.get("elements", [])
+
+        # Build a lookup of participant mini-profiles from "included"
+        profiles_by_urn = {}
+        for entity in data.get("included", []):
+            entity_type = entity.get("$type", "")
+            if "MiniProfile" in entity_type or "MessagingMember" in entity_type:
+                urn = entity.get("entityUrn", "") or entity.get("*miniProfile", "")
+                first = entity.get("firstName", "")
+                last = entity.get("lastName", "")
+                if first or last:
+                    public_id = entity.get("publicIdentifier", "")
+                    profiles_by_urn[urn] = {
+                        "name": f"{first} {last}".strip(),
+                        "linkedin_url": f"https://www.linkedin.com/in/{public_id}" if public_id else "",
+                        "headline": entity.get("occupation", "") or entity.get("headline", ""),
+                    }
+
+        for elem in elements:
+            conv_urn = elem.get("entityUrn", "")
+            # Extract conversation ID from URN like "urn:li:fs_conversation:2-..."
+            conv_id = conv_urn.split(":")[-1] if conv_urn else ""
+
+            last_activity = elem.get("lastActivityAt", 0)
+
+            # Get participants
+            participants = []
+            for p in elem.get("participants", []):
+                member_ref = p.get("*participantProfile", "") or p.get("*miniProfile", "")
+                profile = profiles_by_urn.get(member_ref, {})
+                if profile:
+                    participants.append(profile)
+
+            # Last message preview
+            last_msg = elem.get("lastMessage", {})
+            last_msg_text = ""
+            if last_msg:
+                body = last_msg.get("body", {})
+                if isinstance(body, str):
+                    last_msg_text = body
+                elif isinstance(body, dict):
+                    last_msg_text = body.get("text", "")
+
+            total_count = elem.get("totalEventCount", 0)
+            unread = elem.get("unreadCount", 0)
+
+            conversations.append({
+                "conversation_id": conv_id,
+                "participants": participants,
+                "last_activity_at": last_activity,
+                "last_message_text": last_msg_text,
+                "total_event_count": total_count,
+                "unread_count": unread,
+            })
+
+        return conversations
+
+    def _parse_conversation_events(self, data: dict, conversation_id: str) -> list[dict]:
+        """Parse the /messaging/conversations/{id}/events response."""
+        messages = []
+
+        # Build profile lookup from "included"
+        profiles_by_urn = {}
+        for entity in data.get("included", []):
+            entity_type = entity.get("$type", "")
+            if "MiniProfile" in entity_type:
+                urn = entity.get("entityUrn", "")
+                first = entity.get("firstName", "")
+                last = entity.get("lastName", "")
+                public_id = entity.get("publicIdentifier", "")
+                if first or last:
+                    profiles_by_urn[urn] = {
+                        "name": f"{first} {last}".strip(),
+                        "public_id": public_id,
+                        "linkedin_url": f"https://www.linkedin.com/in/{public_id}" if public_id else "",
+                    }
+
+        for elem in data.get("elements", []):
+            event_type = elem.get("subtype", "") or elem.get("eventContent", {}).get("$type", "")
+
+            # Only process actual messages (not reactions, read receipts, etc.)
+            event_content = elem.get("eventContent", {})
+            content_type = event_content.get("$type", "")
+            if "MessageEvent" not in content_type and "message" not in event_type.lower():
+                # Try to get text anyway — some events have body directly
+                if not event_content.get("body"):
+                    continue
+
+            # Message text
+            body = event_content.get("body", "")
+            if isinstance(body, dict):
+                body = body.get("text", "")
+
+            if not body:
+                continue
+
+            # Sender
+            sender_ref = elem.get("from", {}).get("*miniProfile", "") or elem.get("from", {}).get("*messagingMember", "")
+            sender = profiles_by_urn.get(sender_ref, {"name": "Unknown", "public_id": "", "linkedin_url": ""})
+
+            # Timestamp (milliseconds)
+            created_at = elem.get("createdAt", 0)
+
+            # Message ID
+            msg_urn = elem.get("entityUrn", "") or elem.get("backendUrn", "")
+            msg_id = msg_urn.split(":")[-1] if msg_urn else ""
+
+            messages.append({
+                "message_id": msg_id,
+                "conversation_id": conversation_id,
+                "sender_name": sender.get("name", "Unknown"),
+                "sender_public_id": sender.get("public_id", ""),
+                "sender_linkedin_url": sender.get("linkedin_url", ""),
+                "body": body,
+                "created_at": created_at,
+            })
+
+        # Sort oldest first
+        messages.sort(key=lambda m: m["created_at"])
+        return messages

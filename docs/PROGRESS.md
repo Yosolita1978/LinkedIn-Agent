@@ -1,7 +1,7 @@
 # LinkedIn Intelligence & Outreach Agent - Progress Report
 
-**Date**: February 12, 2026
-**Status**: Backend + Frontend + Contact Ranking + Follower Automation + Showcase Video Complete
+**Last Updated**: March 23, 2026
+**Status**: Phase 1 Quick Fixes Complete + Inbox Sync (Playwright) + Core Automation In Progress
 
 ---
 
@@ -268,7 +268,32 @@ From your LinkedIn export:
 - [x] Claude Code skill: `/render-video` — renders video from CLI with optional codec/scale args
 - [x] `QUICKSTART.md` — local setup guide (backend + frontend)
 
-### Phase 6: End-to-End Testing & Polish — NEXT
+### Phase 5d: Quick Fixes — DONE (March 23, 2026)
+- [x] **Gap 6: Contact Notes** — `notes` column on contacts table, editable notes section on Contact Detail page, notes fed into AI message generation context
+- [x] **Gap 7a: Rate Limit Enforcement** — `check_rate_limit()` in queue service blocks sends when daily limit reached, "Sent Today" counter on Queue page with amber/red warnings
+- [x] **Gap 8: Configurable Persona** — 6 persona env vars (`PERSONA_NAME`, `PERSONA_TITLE`, `PERSONA_LOCATION`, etc.), all hardcoded "Cristina Rodriguez" references replaced in `message_generator.py` and `follower_connector.py`
+- [x] **Gap 7b: Cookie Expiry Detection** — `GET /api/auth/status` endpoint checks Voyager API auth, amber warning banner in Layout when cookies expired, dismissible
+
+### Phase 5e: Inbox Sync — DONE (March 23, 2026)
+- [x] **Gap 3: LinkedIn Inbox Sync** — Playwright-based (Voyager messaging API deprecated, returns 500)
+- [x] Inbox service scrapes messaging page via headless browser
+- [x] Matches conversation participants to existing contacts by name
+- [x] Detects message direction ("You: " prefix = sent, otherwise = received)
+- [x] Needs-reply detection: flags contacts whose last message is from them
+- [x] Frontend: Inbox page with conversation list (left) + message thread (right)
+- [x] Filter tabs: All / Needs Reply / Waiting for Them
+- [x] "Sync Now" button (takes ~15-30s due to Playwright)
+- [x] Dashboard: "Needs Reply" stat card with amber highlight
+- [x] `WarmthBadge` tooltip on hover ("Warmth: 64/100 (Warm)")
+- [x] Fixed `is_logged_in()` — LinkedIn changed feed DOM selectors, added 7 fallback selectors + URL-based fallback
+
+#### Technical Notes
+- LinkedIn's Voyager messaging API (`/messaging/conversations`) returns 500 as of March 2026 — confirmed broken in `nsandman/linkedin-api` issue #10 (Oct 2025)
+- Tried: removing accept header, alternative endpoints (`/messaging/threads`, `/messaging/dash/*`, `/voyagerMessagingDash/*`) — all 404 or 500
+- Solution: Playwright scrapes `linkedin.com/messaging/` directly using `li.msg-conversation-listitem` selector
+- DB migration needed: `ALTER TABLE messages ADD COLUMN linkedin_message_id TEXT UNIQUE; ALTER TABLE messages ADD COLUMN synced_at TIMESTAMP; ALTER TABLE messages ADD COLUMN needs_reply BOOLEAN;`
+
+### Phase 6: End-to-End Testing & Polish
 - [ ] Full end-to-end test of follower connection pipeline with real LinkedIn cookies
 - [ ] Voyager API: validate encoded member ID endpoints with real data
 - [ ] Error recovery: handle mid-scan browser crashes

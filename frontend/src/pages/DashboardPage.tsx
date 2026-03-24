@@ -6,6 +6,8 @@ import { fetchOpportunities } from "../api/resurrection";
 import { fetchRecommendations } from "../api/ranking";
 import { fetchNetworkOverview } from "../api/analytics";
 import { fetchTargetCompanies, addTargetCompany } from "../api/targetCompanies";
+import { fetchInboxStats } from "../api/inbox";
+import type { InboxStats } from "../api/inbox";
 import type { NetworkOverview, TopWarmthContact, QueueStats, Recommendation } from "../types";
 import WarmthBadge from "../components/WarmthBadge";
 import PriorityBadge from "../components/PriorityBadge";
@@ -33,6 +35,7 @@ export default function DashboardPage() {
   const [opportunityCount, setOpportunityCount] = useState<number>(0);
   const [topRecs, setTopRecs] = useState<Recommendation[]>([]);
   const [targetCompanyNames, setTargetCompanyNames] = useState<Set<string>>(new Set());
+  const [inboxStats, setInboxStats] = useState<InboxStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -47,14 +50,16 @@ export default function DashboardPage() {
       fetchOpportunities(),
       fetchRecommendations(5),
       fetchTargetCompanies(),
+      fetchInboxStats().catch(() => null),
     ])
-      .then(([overviewData, topData, queueData, oppData, recData, targetData]) => {
+      .then(([overviewData, topData, queueData, oppData, recData, targetData, inboxData]) => {
         setOverview(overviewData);
         setTopContacts(topData);
         setQueueStats(queueData);
         setOpportunityCount(oppData.count);
         setTopRecs(recData.recommendations);
         setTargetCompanyNames(new Set(targetData.map((tc) => tc.name.toLowerCase())));
+        if (inboxData) setInboxStats(inboxData);
       })
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false));
@@ -111,6 +116,15 @@ export default function DashboardPage() {
           tooltip="Dormant contacts with re-engagement hooks — good moment to reconnect"
           to="/opportunities"
         />
+        {inboxStats && (
+          <StatCard
+            label="Needs Reply"
+            value={inboxStats.needs_reply}
+            tooltip="Contacts whose last message is from them — ball is in your court"
+            to="/inbox"
+            highlight={inboxStats.needs_reply > 0}
+          />
+        )}
       </div>
 
       {/* Network Archetype */}
@@ -320,18 +334,23 @@ export default function DashboardPage() {
   );
 }
 
-function StatCard({ label, value, subtext, tooltip, to }: {
+function StatCard({ label, value, subtext, tooltip, to, highlight }: {
   label: string;
   value: number;
   subtext?: string;
   tooltip?: string;
   to?: string;
+  highlight?: boolean;
 }) {
   const navigate = useNavigate();
 
   return (
     <div
-      className={`bg-slate-800 rounded-lg border border-slate-700 p-4 ${to ? "cursor-pointer hover:border-slate-500 hover:bg-slate-750 transition-colors" : ""}`}
+      className={`rounded-lg border p-4 ${
+        highlight
+          ? "bg-amber-500/10 border-amber-500/30"
+          : "bg-slate-800 border-slate-700"
+      } ${to ? "cursor-pointer hover:border-slate-500 hover:bg-slate-750 transition-colors" : ""}`}
       onClick={to ? () => navigate(to) : undefined}
     >
       <div className="flex items-center gap-1 mb-1">
@@ -346,7 +365,7 @@ function StatCard({ label, value, subtext, tooltip, to }: {
           </div>
         )}
       </div>
-      <p className="text-2xl font-bold text-white">{value.toLocaleString()}</p>
+      <p className={`text-2xl font-bold ${highlight ? "text-amber-400" : "text-white"}`}>{value.toLocaleString()}</p>
       {subtext && <p className="text-[10px] text-slate-500 mt-0.5">{subtext}</p>}
       {to && <p className="text-[10px] text-slate-600 mt-1">Click to view</p>}
     </div>
