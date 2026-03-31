@@ -281,6 +281,10 @@ export interface ConnectResponse {
   stats: ConnectStats;
 }
 
+export interface TrackResponse {
+  saved: number;
+}
+
 // ============================================================================
 // Analytics Types
 // ============================================================================
@@ -322,4 +326,52 @@ export interface NetworkOverview {
   segments: Record<string, SegmentStats>;
   top_companies: CompanyCount[];
   archetype: NetworkArchetype;
+}
+
+// ============================================================================
+// Connection Request Types
+// ============================================================================
+
+export interface ConnectionRequestRecord {
+  id: string;
+  profile_url: string;
+  name: string;
+  headline: string | null;
+  company: string | null;
+  location: string | null;
+  segments: string[] | null;
+  note_sent: string | null;
+  status: string;
+  sent_at: string;
+  accepted_at: string | null;
+}
+
+export interface ConnectionRequestListResponse {
+  requests: ConnectionRequestRecord[];
+  total: number;
+}
+
+export interface CheckAcceptancesResponse {
+  checked: number;
+  newly_accepted: number;
+  still_pending: number;
+  accepted_names: string[];
+}
+
+export interface SegmentAcceptanceStats {
+  segment: string;
+  total_sent: number;
+  accepted: number;
+  pending: number;
+  failed: number;
+  acceptance_rate: number;
+}
+
+export interface ConnectionRequestStatsResponse {
+  total_requests: number;
+  total_accepted: number;
+  total_pending: number;
+  total_failed: number;
+  overall_acceptance_rate: number;
+  by_segment: SegmentAcceptanceStats[];
 }

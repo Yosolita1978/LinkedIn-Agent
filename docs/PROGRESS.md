@@ -420,9 +420,31 @@ curl -X POST http://localhost:8000/api/generate/message \
 
 ---
 
-## Next Session Priorities
+## Next Session Priorities (Updated March 23, 2026)
 
-1. **End-to-End Testing** - Test the full follower connection pipeline with real LinkedIn cookies and a running backend
-2. **Voyager API Validation** - Confirm encoded member ID endpoints work with real LinkedIn data
-3. **Profile Enrichment** - Use Voyager API to fill in missing data for existing contacts
-4. **Advanced Features** - Campaign management, analytics, automated scheduling
+### Immediate — Finish Phase 2
+
+1. **Run DB migration** — The inbox sync needs 3 new columns on `messages` table (see Phase 5e notes above)
+2. **Test inbox sync from UI** — Click "Sync Now" on `/inbox`, verify conversations appear and match contacts
+3. **Gap 1: Campaign Sequences** — Multi-step follow-up automation (Day 0: connect, Day 3: welcome, Day 7: share resource). This is the biggest remaining feature in Phase 2.
+
+### Next — Follower Engagement Strategy (Gap 9)
+
+The current follower pipeline is **scan → enrich → connect**. Once connected, the follower drops into the general contact pool with no further automation. This is a missed opportunity.
+
+**Ideas to explore:**
+
+- **Follower-to-conversation funnel**: After a connection is accepted, auto-enroll them in a welcome sequence (Gap 1). Day 0: connection accepted → Day 2: "Thanks for connecting" message → Day 7: share a relevant resource based on their segment.
+- **Follower analytics**: Track acceptance rate by segment. Which segments accept most? Which connection notes work best? Use this to refine the AI note generator.
+- **Recurring follower scans**: Run follower scans periodically (weekly?) to catch new followers. Currently this is manual — could be a scheduled task.
+- **Follower-to-segment pipeline**: New followers get scanned, segmented, and if they match MujerTech/Cascadia/Job Target, they get auto-queued for connection with a segment-specific note. If they don't match, they still get a personalized "general" note.
+- **Follower warmth tracking**: Followers who engage with your content (likes, comments) before connecting are warmer leads. Track this signal if LinkedIn exposes it.
+- **"Who followed back" detection**: After sending connections, check which requests were accepted. Auto-update the contact status and trigger the welcome sequence.
+- **Content-driven follower growth**: Tie content scheduling (Gap 4) to follower analytics — posts that drive the most new followers should inform future content.
+
+### Later — Phase 3+
+
+4. **Gap 4: Content Scheduling** — Compose, schedule, auto-publish LinkedIn posts
+5. **Gap 5: Search Import** — Import contacts from LinkedIn search URLs
+6. **Gap 7c/7d: Smarter delays + Warm-up mode**
+7. **Campaign analytics** — Acceptance rate, reply rate per sequence, best-performing notes

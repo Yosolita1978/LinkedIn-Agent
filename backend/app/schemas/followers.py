@@ -91,3 +91,13 @@ class ConnectStats(BaseModel):
 class ConnectResponse(BaseModel):
     results: list[ConnectResult]
     stats: ConnectStats
+
+
+class TrackRequest(BaseModel):
+    """Candidates the user manually sent connection requests to."""
+    candidates: list[CandidateWithNote]
+
+
+class TrackResponse(BaseModel):
+    """Response after saving tracked connection requests."""
+    saved: int

@@ -4,6 +4,7 @@ from app.models.resurrection import ResurrectionOpportunity
 from app.models.target_company import TargetCompany
 from app.models.queue import OutreachQueueItem
 from app.models.upload import DataUpload
+from app.models.connection_request import ConnectionRequest
 
 __all__ = [
     "Contact",
@@ -12,4 +13,5 @@ __all__ = [
     "TargetCompany",
     "OutreachQueueItem",
     "DataUpload",
+    "ConnectionRequest",
 ]

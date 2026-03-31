@@ -205,7 +205,7 @@ class LinkedInVoyager:
             if resp.status_code != 200:
                 logger.debug(f"Voyager dash/profiles: HTTP {resp.status_code} for {member_id[:30]}")
                 return None
-            return self._parse_dash_profile(resp.json())
+            return self._parse_dash_profile(resp.json(), member_id)
         except Exception as e:
             logger.debug(f"Voyager dash/profiles error: {e}")
             return None
@@ -245,21 +245,35 @@ class LinkedInVoyager:
 
         return profile if self._is_valid_name(profile["name"]) else None
 
-    def _parse_dash_profile(self, data: dict) -> dict | None:
-        """Parse the /identity/dash/profiles response."""
+    def _parse_dash_profile(self, data: dict, requested_member_id: str = "") -> dict | None:
+        """
+        Parse the /identity/dash/profiles response.
+
+        The 'included' array contains multiple entities — including the viewer's
+        own profile. We must only extract data from the entity that matches
+        the requested member ID to avoid mixing up profiles.
+        """
         profile = self._empty_profile()
 
-        # The dash endpoint can have data at the top level or in "included"
         included = data.get("included", [])
         elements = data.get("elements", [])
 
-        # Try elements first (direct response)
+        # Try elements first (direct response — these are for the requested profile)
         for element in elements:
             self._extract_from_entity(element, element.get("$type", ""), profile)
 
-        # Then try included (normalized response)
+        # For included entities, only process those that belong to the requested profile.
+        # Each entity has an entityUrn or $id containing the member ID.
         for entity in included:
             entity_type = entity.get("$type", "")
+
+            # Only process Profile/MiniProfile entities that match the requested member
+            if any(t in entity_type for t in ["Profile", "MiniProfile"]):
+                entity_urn = entity.get("entityUrn", "") or entity.get("$id", "") or entity.get("publicIdentifier", "")
+                # Skip entities that don't contain the requested member ID
+                if requested_member_id and entity_urn and requested_member_id not in entity_urn:
+                    continue
+
             self._extract_from_entity(entity, entity_type, profile)
 
         return profile if self._is_valid_name(profile["name"]) else None
@@ -285,6 +299,13 @@ class LinkedInVoyager:
         if " at " in occupation:
             profile["company"] = occupation.split(" at ", 1)[1].strip()
 
+        # Connection degree
+        network_distance = data.get("networkDistance", {})
+        if isinstance(network_distance, dict):
+            profile["connection_degree"] = network_distance.get("value", "")
+        elif network_distance:
+            profile["connection_degree"] = str(network_distance)
+
         return profile if self._is_valid_name(profile["name"]) else None
 
     def _empty_profile(self) -> dict:
@@ -298,6 +319,7 @@ class LinkedInVoyager:
             "experience": [],
             "education": [],
             "profile_url": "",
+            "connection_degree": "",
         }
 
     def _is_valid_name(self, name: str) -> bool:
@@ -337,6 +359,15 @@ class LinkedInVoyager:
             )
             if location and not profile["location"]:
                 profile["location"] = location
+
+            # Connection degree (DISTANCE_1 = 1st degree / already connected)
+            network_distance = entity.get("networkDistance", {})
+            if isinstance(network_distance, dict):
+                distance_value = network_distance.get("value", "")
+            else:
+                distance_value = str(network_distance) if network_distance else ""
+            if distance_value and not profile["connection_degree"]:
+                profile["connection_degree"] = distance_value
 
         # Position entities (experience)
         if any(t in entity_type for t in ["Position", "position"]):

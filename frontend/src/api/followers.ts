@@ -5,6 +5,10 @@ import type {
   GenerateNotesResponse,
   CandidateWithNote,
   ConnectResponse,
+  TrackResponse,
+  ConnectionRequestListResponse,
+  CheckAcceptancesResponse,
+  ConnectionRequestStatsResponse,
 } from "../types";
 
 export async function scanFollowers(
@@ -40,4 +44,34 @@ export async function connectWithCandidates(
       max_connections: maxConnections,
     }),
   });
+}
+
+export async function trackConnectionRequests(
+  candidates: CandidateWithNote[]
+): Promise<TrackResponse> {
+  return apiFetch<TrackResponse>("/api/followers/track", {
+    method: "POST",
+    body: JSON.stringify({ candidates }),
+  });
+}
+
+export async function listConnectionRequests(
+  status?: string
+): Promise<ConnectionRequestListResponse> {
+  const params = status ? `?status=${status}` : "";
+  return apiFetch<ConnectionRequestListResponse>(
+    `/api/followers/requests${params}`
+  );
+}
+
+export async function checkAcceptances(): Promise<CheckAcceptancesResponse> {
+  return apiFetch<CheckAcceptancesResponse>("/api/followers/check-acceptances", {
+    method: "POST",
+  });
+}
+
+export async function getConnectionRequestStats(): Promise<ConnectionRequestStatsResponse> {
+  return apiFetch<ConnectionRequestStatsResponse>(
+    "/api/followers/requests/stats"
+  );
 }

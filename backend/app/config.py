@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     # LinkedIn
     linkedin_email: str = ""
     linkedin_password: str = ""
+    linkedin_profile_url: str = ""
     
     # Persona
     persona_name: str = "Cristina Rodriguez"

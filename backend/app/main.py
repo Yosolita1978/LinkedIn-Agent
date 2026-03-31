@@ -15,6 +15,7 @@ from app.models import (
     TargetCompany,
     OutreachQueueItem,
     DataUpload,
+    ConnectionRequest,
 )
 
 settings = get_settings()

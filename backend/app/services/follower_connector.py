@@ -12,6 +12,7 @@ Two-phase approach: scan (preview candidates) → connect (send requests)
 
 import logging
 import random
+import unicodedata
 from typing import Optional
 
 from agents import Agent, Runner, trace, set_default_openai_key
@@ -94,6 +95,12 @@ SEGMENT_NOTE_CONTEXTS = {
 # ============================================================================
 # Helpers
 # ============================================================================
+
+def strip_accents(text: str) -> str:
+    """Remove diacritics/accents so 'Rodríguez' matches 'Rodriguez'."""
+    nfkd = unicodedata.normalize("NFKD", text)
+    return "".join(c for c in nfkd if not unicodedata.combining(c))
+
 
 def normalize_linkedin_url(url: str) -> str:
     """Normalize a LinkedIn profile URL for consistent comparison."""
@@ -283,7 +290,19 @@ async def scan_followers(
     followers = unique_followers
 
     # Step 1c: Filter out own profile (shows up in page header/nav)
-    # Strategy 1: try to get own profile URL from the browser page
+    # Strategy 1: filter by configured profile URL (most reliable)
+    if settings.linkedin_profile_url:
+        own_config_normalized = normalize_linkedin_url(settings.linkedin_profile_url)
+        before = len(followers)
+        followers = [
+            f for f in followers
+            if normalize_linkedin_url(f["profile_url"]) != own_config_normalized
+        ]
+        self_removed = before - len(followers)
+        if self_removed:
+            logger.info(f"Filtered out {self_removed} own profile entries (by config URL)")
+
+    # Strategy 2: try to get own profile URL from the browser page
     own_profile_url = await browser.get_own_profile_url()
     if own_profile_url:
         own_normalized = normalize_linkedin_url(own_profile_url)
@@ -294,9 +313,21 @@ async def scan_followers(
         ]
         self_removed = before - len(followers)
         if self_removed:
-            logger.info(f"Filtered out {self_removed} own profile entries (by URL)")
+            logger.info(f"Filtered out {self_removed} own profile entries (by browser URL)")
 
-    # Strategy 2: filter out any profile URL that appears 3+ times
+    # Strategy 3: filter by persona name (catches cases where URL detection fails)
+    own_name = strip_accents(settings.persona_name.strip().lower())
+    if own_name:
+        before = len(followers)
+        followers = [
+            f for f in followers
+            if strip_accents(f.get("name", "").strip().lower()) != own_name
+        ]
+        self_removed = before - len(followers)
+        if self_removed:
+            logger.info(f"Filtered out {self_removed} own profile entries (by name)")
+
+    # Strategy 4: filter out any profile URL that appears 3+ times
     # (own profile link appears on every page load, real followers appear once)
     from collections import Counter
     url_counts = Counter(
@@ -320,24 +351,33 @@ async def scan_followers(
 
     stats["followers_scraped"] = len(followers)
 
-    # Step 2: Get existing contact URLs from DB for filtering
-    stmt = select(Contact.linkedin_url)
+    # Step 2: Get existing contacts from DB for filtering (by URL and name)
+    stmt = select(Contact.linkedin_url, Contact.name)
     result = await db.execute(stmt)
+    contact_rows = result.all()
     existing_urls = {
         normalize_linkedin_url(url)
-        for url in result.scalars().all()
+        for url, _ in contact_rows
         if url
+    }
+    existing_names = {
+        strip_accents(name.strip().lower())
+        for _, name in contact_rows
+        if name
     }
 
     # Get target companies for job_target segmentation
     target_companies = await get_target_company_names(db)
 
-    # Step 3: Filter out existing contacts
+    # Step 3: Filter out existing contacts (by URL or name)
     new_followers = []
     for follower in followers:
         normalized = normalize_linkedin_url(follower["profile_url"])
-        if normalized in existing_urls:
+        follower_name = strip_accents(follower.get("name", "").strip().lower())
+        if normalized in existing_urls or (follower_name and follower_name in existing_names):
             stats["already_in_db"] += 1
+            if follower_name in existing_names:
+                logger.debug(f"  Filtered {follower['name']} — already a contact (by name)")
         else:
             new_followers.append(follower)
 
@@ -382,6 +422,13 @@ async def scan_followers(
             stats["profiles_failed"] += 1
             continue
 
+        # Skip 1st-degree connections (already connected)
+        connection_degree = profile.get("connection_degree", "")
+        if "DISTANCE_1" in str(connection_degree).upper():
+            logger.info(f"  Skipping {follower['name']} — already a 1st-degree connection")
+            stats["already_in_db"] += 1
+            continue
+
         stats["profiles_enriched"] += 1
 
         # Step 5: Segment using the enriched profile data
@@ -413,6 +460,24 @@ async def scan_followers(
 
     # Clean up Voyager client
     await voyager.stop()
+
+    # Final safety filter: remove own profile from candidates
+    # (catches any entries that slipped through earlier filters)
+    own_name_normalized = strip_accents(settings.persona_name.strip().lower())
+    own_url_normalized = normalize_linkedin_url(settings.linkedin_profile_url) if settings.linkedin_profile_url else ""
+
+    before_final = len(candidates)
+    candidates = [
+        c for c in candidates
+        if strip_accents(c.get("name", "").strip().lower()) != own_name_normalized
+        and (not own_url_normalized or normalize_linkedin_url(c["profile_url"]) != own_url_normalized)
+    ]
+    final_removed = before_final - len(candidates)
+    if final_removed:
+        logger.info(f"Final filter removed {final_removed} own profile entries from candidates")
+        # Adjust stats
+        stats["profiles_enriched"] -= final_removed
+        stats["no_segment"] = max(0, stats["no_segment"] - final_removed)
 
     logger.info(
         f"Scan complete: {len(candidates)} candidates "
