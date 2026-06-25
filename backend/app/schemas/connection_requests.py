@@ -4,13 +4,14 @@ Connection request schemas — for tracking and querying past connection request
 
 from datetime import datetime
 from typing import Optional
+from uuid import UUID
 
 from pydantic import BaseModel
 
 
 class ConnectionRequestOut(BaseModel):
     """A single connection request record."""
-    id: str
+    id: UUID  # serialized to its canonical string form in JSON
     profile_url: str
     name: str
     headline: str | None = None
@@ -37,6 +38,10 @@ class CheckAcceptancesResponse(BaseModel):
     newly_accepted: int
     still_pending: int
     accepted_names: list[str]
+    # Accept → conversation bridge results
+    conversation_queued: int = 0
+    queued_names: list[str] = []
+    errors: list[str] = []
 
 
 class SegmentAcceptanceStats(BaseModel):

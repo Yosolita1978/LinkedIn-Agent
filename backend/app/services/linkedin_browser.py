@@ -93,6 +93,15 @@ class LinkedInBrowser:
     CONNECTIONS_URL = "https://www.linkedin.com/mynetwork/invite-connect/connections/"
     FOLLOWERS_URL = "https://www.linkedin.com/mynetwork/network-manager/people-follow/followers/"
 
+    # Fallback selectors for a single follower card. LinkedIn changes the DOM
+    # frequently, so we keep several and fail loudly (ScrapingError) if none
+    # match — never silently return an empty follower list.
+    FOLLOWER_CARD_SELECTORS = [
+        'div[data-view-name="search-entity-result-universal-template"]',
+        "li.reusable-search__result-container",
+        "div.entity-result",
+    ]
+
     def __init__(self, cookies_path: Path | None = None):
         self._playwright = None
         self._browser: Browser | None = None
@@ -410,16 +419,27 @@ class LinkedInBrowser:
         # Navigate with human-like delays
         await self._navigate_with_delay(self.FOLLOWERS_URL)
 
+        # Fail loudly if the follower list never renders (per ADR-003: keep
+        # fallback selectors, fail loud when none match — no silent empty list).
+        try:
+            await self._page.wait_for_selector(
+                ", ".join(self.FOLLOWER_CARD_SELECTORS), timeout=10000
+            )
+        except PlaywrightTimeout:
+            logger.error("Follower cards never rendered on the page")
+            raise ScrapingError(
+                "Could not find any follower cards — the followers page "
+                "structure may have changed, or the list is empty."
+            )
+
         followers = []
         seen_urls = set()
         no_new_items_count = 0
         max_scroll_attempts = 20  # Safety limit
 
         for scroll_attempt in range(max_scroll_attempts):
-            # Query all cards currently on page
-            cards = await self._page.query_selector_all(
-                'div[data-view-name="search-entity-result-universal-template"]'
-            )
+            # Query all cards currently on page, trying fallback selectors in order
+            cards = await self._query_follower_cards()
             initial_count = len(followers)
 
             for card in cards:
@@ -454,8 +474,24 @@ class LinkedInBrowser:
         logger.info(f"Scraped {len(followers)} followers")
         return followers
 
+    async def _query_follower_cards(self) -> list:
+        """Query follower cards, trying fallback selectors in order (ADR-003)."""
+        for selector in self.FOLLOWER_CARD_SELECTORS:
+            cards = await self._page.query_selector_all(selector)
+            if cards:
+                return cards
+        return []
+
     async def _extract_follower_card(self, card) -> dict | None:
-        """Extract data from a single follower card element."""
+        """
+        Extract data from a single follower card element.
+
+        Returns a dict with name, headline, profile_url. The followers list page
+        exposes NO connection-degree badge, so connection status is determined
+        later via Voyager enrichment (see follower_connector.scan_followers).
+
+        Returns None only when the card is unusable (no profile URL / no name).
+        """
         try:
             # Find ALL profile links - there are usually two: image link and name link
             link_els = await card.query_selector_all('a[href*="/in/"]')

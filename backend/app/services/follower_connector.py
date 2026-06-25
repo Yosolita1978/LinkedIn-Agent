@@ -20,9 +20,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
-from app.models import Contact
+from app.models import Contact, ConnectionRequest
 from app.services.linkedin_browser import LinkedInBrowser, random_delay
-from app.services.linkedin_voyager import LinkedInVoyager
+from app.services.linkedin_voyager import LinkedInVoyager, extract_profile_id
 from app.services.segmenter import (
     LATAM_LOCATIONS,
     PNW_LOCATIONS,
@@ -100,6 +100,18 @@ def strip_accents(text: str) -> str:
     """Remove diacritics/accents so 'Rodríguez' matches 'Rodriguez'."""
     nfkd = unicodedata.normalize("NFKD", text)
     return "".join(c for c in nfkd if not unicodedata.combining(c))
+
+
+def profile_identity_key(profile_url: str) -> str:
+    """
+    Stable identity key for a profile: the `/in/<id>` public identifier
+    (vanity slug like 'john-doe-123' or encoded member URN like 'ACoAAA...'),
+    lowercased.
+
+    This is the ONLY key we dedupe on — never the display name, which collides.
+    Raises ValueError if the URL has no `/in/` segment (fail loudly; do not guess).
+    """
+    return extract_profile_id(profile_url).strip("/").lower()
 
 
 def normalize_linkedin_url(url: str) -> str:
@@ -258,7 +270,9 @@ async def scan_followers(
 
     stats = {
         "followers_scraped": 0,
-        "already_in_db": 0,
+        "excluded_already_connected": 0,   # degree badge == "1st"
+        "unparseable_degree": 0,           # degree badge missing/unreadable (skipped)
+        "already_in_db": 0,                # deduped vs contacts / connection_requests
         "profiles_enriched": 0,
         "profiles_failed": 0,
         "matched_mujertech": 0,
@@ -267,13 +281,17 @@ async def scan_followers(
         "no_segment": 0,
     }
 
+    # Explicit per-card errors (e.g. degree could not be parsed). We surface
+    # these rather than silently defaulting an unknown card to "candidate".
+    errors: list[str] = []
+
     # Step 1: Scrape followers list
     followers = await browser.scrape_followers(max_items=max_followers)
     stats["followers_scraped"] = len(followers)
     logger.info(f"Scraped {len(followers)} followers (raw)")
 
     if not followers:
-        return {"candidates": [], "stats": stats}
+        return {"candidates": [], "stats": stats, "errors": errors}
 
     # Step 1b: Deduplicate by normalized URL (scrolling can produce repeats)
     seen_urls = set()
@@ -351,39 +369,47 @@ async def scan_followers(
 
     stats["followers_scraped"] = len(followers)
 
-    # Step 2: Get existing contacts from DB for filtering (by URL and name)
-    stmt = select(Contact.linkedin_url, Contact.name)
-    result = await db.execute(stmt)
-    contact_rows = result.all()
-    existing_urls = {
-        normalize_linkedin_url(url)
-        for url, _ in contact_rows
-        if url
-    }
-    existing_names = {
-        strip_accents(name.strip().lower())
-        for _, name in contact_rows
-        if name
-    }
+    # Step 2: Deduplicate by stable identity key against BOTH existing contacts
+    # and existing connection_requests, so we never re-invite someone we already
+    # track. The "already a connection?" check happens after enrichment (Step 4),
+    # using the authoritative Voyager connection degree — the followers list page
+    # itself exposes no degree signal.
+    existing_keys: set[str] = set()
+
+    contact_urls = await db.execute(select(Contact.linkedin_url))
+    request_urls = await db.execute(select(ConnectionRequest.profile_url))
+    for (url,) in [*contact_urls.all(), *request_urls.all()]:
+        if not url:
+            continue
+        try:
+            existing_keys.add(profile_identity_key(url))
+        except ValueError:
+            # A malformed stored URL shouldn't abort the whole scan, but we log
+            # it loudly rather than swallowing it silently.
+            logger.warning(f"  Stored URL has no /in/ identity segment: {url}")
 
     # Get target companies for job_target segmentation
     target_companies = await get_target_company_names(db)
 
-    # Step 3: Filter out existing contacts (by URL or name)
     new_followers = []
     for follower in followers:
-        normalized = normalize_linkedin_url(follower["profile_url"])
-        follower_name = strip_accents(follower.get("name", "").strip().lower())
-        if normalized in existing_urls or (follower_name and follower_name in existing_names):
+        try:
+            key = profile_identity_key(follower["profile_url"])
+        except ValueError:
+            msg = f"Could not derive identity key for {follower['profile_url']}"
+            errors.append(msg)
+            stats["unparseable_degree"] += 1
+            logger.warning(f"  {msg}")
+            continue
+        if key in existing_keys:
             stats["already_in_db"] += 1
-            if follower_name in existing_names:
-                logger.debug(f"  Filtered {follower['name']} — already a contact (by name)")
+            logger.debug(f"  Filtered {follower['name']} — already tracked ({key})")
         else:
             new_followers.append(follower)
 
     logger.info(
-        f"{len(new_followers)} new followers (not in DB), "
-        f"{stats['already_in_db']} already known"
+        f"{len(new_followers)} followers to evaluate (not already tracked); "
+        f"{stats['already_in_db']} already tracked"
     )
 
     # Step 4: Enrich profiles via Voyager API (fast, ~1s per profile)
@@ -422,13 +448,24 @@ async def scan_followers(
             stats["profiles_failed"] += 1
             continue
 
-        # Skip 1st-degree connections (already connected)
-        connection_degree = profile.get("connection_degree", "")
-        if "DISTANCE_1" in str(connection_degree).upper():
-            logger.info(f"  Skipping {follower['name']} — already a 1st-degree connection")
-            stats["already_in_db"] += 1
+        # Authoritative "already a connection?" check, from the enriched profile.
+        # Voyager returns the connection degree (DISTANCE_1/2/3). The followers
+        # list page exposes no degree signal, so this is where classification
+        # happens. We never default an unknown degree to "candidate": if it can't
+        # be determined, record an explicit error and skip (no guess, no fallback).
+        degree = str(profile.get("connection_degree", "")).upper()
+        if not degree:
+            msg = f"Could not determine connection degree for {follower['profile_url']}"
+            errors.append(msg)
+            stats["unparseable_degree"] += 1
+            logger.warning(f"  {msg}")
+            continue
+        if "DISTANCE_1" in degree:
+            stats["excluded_already_connected"] += 1
+            logger.info(f"  Excluding {follower['name']} — already a 1st-degree connection")
             continue
 
+        # DISTANCE_2 / DISTANCE_3 → a follower who is not a connection → candidate
         stats["profiles_enriched"] += 1
 
         # Step 5: Segment using the enriched profile data
@@ -486,7 +523,7 @@ async def scan_followers(
         f"job_target={stats['matched_job_target']})"
     )
 
-    return {"candidates": candidates, "stats": stats}
+    return {"candidates": candidates, "stats": stats, "errors": errors}
 
 
 # ============================================================================
@@ -565,6 +602,11 @@ async def connect_with_candidates(
         logger.info(f"Processing {i+1}/{len(to_connect)}: {candidate['name']}")
 
         note = candidate.get("note", "")
+
+        # TODO(weekly-cap): the weekly invitation-cap drip campaign will hook in
+        # HERE — before each send, check the rolling 7-day sent count and stop
+        # (or defer the remaining candidates) once the weekly limit is reached.
+        # Not implemented in this task; this is the single gate it will guard.
 
         # Send the connection request
         result = await browser.send_connection_request(

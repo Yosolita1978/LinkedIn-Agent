@@ -234,7 +234,9 @@ export interface FollowerCandidate {
 
 export interface ScanStats {
   followers_scraped: number;
-  already_in_db: number;
+  excluded_already_connected: number; // degree badge == "1st"
+  unparseable_degree: number;         // degree badge missing/unreadable (skipped)
+  already_in_db: number;              // deduped vs contacts / connection_requests
   profiles_enriched: number;
   profiles_failed: number;
   matched_mujertech: number;
@@ -246,6 +248,7 @@ export interface ScanStats {
 export interface ScanResponse {
   candidates: FollowerCandidate[];
   stats: ScanStats;
+  errors: string[]; // explicit per-card errors (e.g. unparseable degree)
 }
 
 export interface CandidateWithNote extends FollowerCandidate {
@@ -356,6 +359,10 @@ export interface CheckAcceptancesResponse {
   newly_accepted: number;
   still_pending: number;
   accepted_names: string[];
+  // Accept → conversation bridge results
+  conversation_queued: number;
+  queued_names: string[];
+  errors: string[];
 }
 
 export interface SegmentAcceptanceStats {

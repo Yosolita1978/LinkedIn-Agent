@@ -25,7 +25,12 @@ class ConnectionRequest(Base):
     )
     note_sent: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
-    # Status: pending, accepted, rejected, withdrawn, already_connected, failed
+    # Status progression:
+    #   pending → accepted → conversation_queued   (happy path)
+    # Other terminal/outcome states (set at send time or on detection):
+    #   already_connected, already_pending, failed, rejected, withdrawn
+    # 'conversation_queued' means acceptance was detected AND a first-touch
+    # message has been generated and inserted into the outreach queue as a draft.
     status: Mapped[str] = mapped_column(
         String(30), nullable=False, default="pending"
     )

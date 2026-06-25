@@ -34,6 +34,7 @@ export default function FollowersPage() {
   // Scan results
   const [candidates, setCandidates] = useState<FollowerCandidate[]>([]);
   const [scanStats, setScanStats] = useState<ScanStats | null>(null);
+  const [scanErrors, setScanErrors] = useState<string[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [segmentFilter, setSegmentFilter] = useState<string>("");
 
@@ -102,11 +103,13 @@ export default function FollowersPage() {
     setError(null);
     setCandidates([]);
     setScanStats(null);
+    setScanErrors([]);
 
     try {
       const data = await scanFollowers(maxFollowers, maxProfiles);
       setCandidates(data.candidates);
       setScanStats(data.stats);
+      setScanErrors(data.errors ?? []);
       setSelected(new Set(data.candidates.map((c) => c.profile_url)));
       setPhase("candidates");
     } catch (err) {
@@ -211,13 +214,20 @@ export default function FollowersPage() {
 
   // ── Selection ──
 
-  const filteredCandidates = segmentFilter
-    ? candidates.filter((c) =>
-        segmentFilter === "none"
-          ? c.segments.length === 0
-          : c.segments.includes(segmentFilter)
-      )
-    : candidates;
+  const filteredCandidates = (
+    segmentFilter
+      ? candidates.filter((c) =>
+          segmentFilter === "none"
+            ? c.segments.length === 0
+            : c.segments.includes(segmentFilter)
+        )
+      : candidates
+  )
+    // Priority sort: segmented candidates first (more to personalize on). True
+    // warmth/priority for non-contact candidates needs backend support — see
+    // the backend follow-ups list.
+    .slice()
+    .sort((a, b) => b.segments.length - a.segments.length);
 
   function toggleCandidate(profileUrl: string) {
     setSelected((prev) => {
@@ -253,6 +263,7 @@ export default function FollowersPage() {
     setPhase("idle");
     setCandidates([]);
     setScanStats(null);
+    setScanErrors([]);
     setSelected(new Set());
     setSegmentFilter("");
     setCandidatesWithNotes([]);
@@ -264,9 +275,9 @@ export default function FollowersPage() {
 
   return (
     <div>
-      <h1 className="text-2xl font-bold text-white mb-2">Connect with Followers</h1>
+      <h1 className="text-2xl font-bold text-white mb-2">Followers to Convert</h1>
       <p className="text-slate-400 text-sm mb-6">
-        Scan your LinkedIn followers, generate personalized connection notes, and track who you've reached out to.
+        Find followers who aren't connections yet, write a personalized note, and send the request. Segmented candidates are prioritized first.
       </p>
 
       {/* ── Tabs ── */}
@@ -360,11 +371,31 @@ export default function FollowersPage() {
               {scanStats && (
                 <div className="mb-5 p-4 bg-slate-800 rounded-lg border border-slate-700">
                   <p className="text-sm text-slate-300">
-                    Found <span className="text-white font-semibold">{candidates.length}</span> new follower{candidates.length !== 1 ? "s" : ""} to connect with.
-                    {scanStats.already_in_db > 0 && (
-                      <span className="text-slate-400"> ({scanStats.already_in_db} already in your network were skipped.)</span>
-                    )}
+                    Found <span className="text-white font-semibold">{candidates.length}</span> follower{candidates.length !== 1 ? "s" : ""} who {candidates.length === 1 ? "is" : "are"} not yet connected.
                   </p>
+
+                  {/* Why others were excluded — the badge-based classification */}
+                  <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2 text-xs">
+                    <span className="text-slate-400">
+                      Scanned <span className="text-slate-300">{scanStats.followers_scraped}</span>
+                    </span>
+                    {scanStats.excluded_already_connected > 0 && (
+                      <span className="text-blue-400">
+                        {scanStats.excluded_already_connected} already connected (1st) — excluded
+                      </span>
+                    )}
+                    {scanStats.already_in_db > 0 && (
+                      <span className="text-slate-400">
+                        {scanStats.already_in_db} already tracked — skipped
+                      </span>
+                    )}
+                    {scanStats.unparseable_degree > 0 && (
+                      <span className="text-amber-400">
+                        {scanStats.unparseable_degree} couldn't determine degree — skipped
+                      </span>
+                    )}
+                  </div>
+
                   {(scanStats.matched_mujertech > 0 || scanStats.matched_cascadia > 0 || scanStats.matched_job_target > 0) && (
                     <div className="flex gap-3 mt-2">
                       {scanStats.matched_mujertech > 0 && (
@@ -378,6 +409,21 @@ export default function FollowersPage() {
                       )}
                     </div>
                   )}
+                </div>
+              )}
+
+              {/* Explicit per-card errors — we surface these instead of silently
+                  defaulting an unreadable card to "candidate". */}
+              {scanErrors.length > 0 && (
+                <div className="mb-5 p-4 bg-amber-500/10 rounded-lg border border-amber-500/30">
+                  <p className="text-sm font-medium text-amber-300 mb-2">
+                    {scanErrors.length} card{scanErrors.length !== 1 ? "s" : ""} could not be classified and {scanErrors.length === 1 ? "was" : "were"} skipped
+                  </p>
+                  <ul className="text-xs text-amber-400/80 space-y-1 max-h-32 overflow-y-auto">
+                    {scanErrors.map((msg, i) => (
+                      <li key={i} className="font-mono break-all">{msg}</li>
+                    ))}
+                  </ul>
                 </div>
               )}
 
@@ -793,6 +839,7 @@ export default function FollowersPage() {
                 <option value="">All statuses</option>
                 <option value="pending">Pending</option>
                 <option value="accepted">Accepted</option>
+                <option value="conversation_queued">Conversation Queued</option>
                 <option value="failed">Failed</option>
               </select>
               <span className="text-sm text-slate-400">
@@ -821,7 +868,7 @@ export default function FollowersPage() {
           {/* Check Result Banner */}
           {checkResult && (
             <div className={`mb-4 p-4 rounded-lg border ${
-              checkResult.newly_accepted > 0
+              checkResult.newly_accepted > 0 || checkResult.conversation_queued > 0
                 ? "bg-green-500/10 border-green-500/30"
                 : "bg-slate-800 border-slate-700"
             }`}>
@@ -838,10 +885,36 @@ export default function FollowersPage() {
                   {checkResult.accepted_names.join(", ")}
                 </p>
               )}
+
+              {/* Accept → conversation bridge result */}
+              {checkResult.conversation_queued > 0 && (
+                <p className="text-sm font-medium text-blue-300 mt-2">
+                  {checkResult.conversation_queued} conversation{checkResult.conversation_queued > 1 ? "s" : ""} queued as draft{checkResult.conversation_queued > 1 ? "s" : ""}
+                  {checkResult.queued_names.length > 0 && (
+                    <span className="text-blue-400/70 font-normal"> — {checkResult.queued_names.join(", ")}</span>
+                  )}
+                  <span className="text-slate-500 font-normal"> (see the Queue page)</span>
+                </p>
+              )}
+
               <p className="text-xs text-slate-500 mt-1">
                 Checked {checkResult.checked} pending request{checkResult.checked !== 1 ? "s" : ""}.
                 {checkResult.still_pending > 0 && ` ${checkResult.still_pending} still pending.`}
               </p>
+
+              {/* Bridge errors (e.g. accepted request with no matching contact) */}
+              {checkResult.errors.length > 0 && (
+                <div className="mt-2 pt-2 border-t border-slate-700">
+                  <p className="text-xs font-medium text-amber-300 mb-1">
+                    {checkResult.errors.length} issue{checkResult.errors.length !== 1 ? "s" : ""} while queuing:
+                  </p>
+                  <ul className="text-xs text-amber-400/80 space-y-0.5">
+                    {checkResult.errors.map((msg, i) => (
+                      <li key={i}>{msg}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
             </div>
           )}
 
@@ -871,6 +944,8 @@ export default function FollowersPage() {
                   className={`bg-slate-800 rounded-lg border p-4 ${
                     req.status === "accepted"
                       ? "border-green-500/30"
+                      : req.status === "conversation_queued"
+                      ? "border-blue-500/30"
                       : req.status === "pending"
                       ? "border-yellow-500/20"
                       : "border-slate-700"
@@ -962,6 +1037,7 @@ function RequestStatusBadge({ status }: { status: string }) {
     sent: { bg: "bg-green-500/20", text: "text-green-400", label: "Sent" },
     pending: { bg: "bg-yellow-500/20", text: "text-yellow-400", label: "Pending" },
     accepted: { bg: "bg-green-500/20", text: "text-green-400", label: "Accepted" },
+    conversation_queued: { bg: "bg-blue-500/20", text: "text-blue-400", label: "Conversation Queued" },
     rejected: { bg: "bg-red-500/20", text: "text-red-400", label: "Rejected" },
     withdrawn: { bg: "bg-slate-500/20", text: "text-slate-400", label: "Withdrawn" },
     already_connected: { bg: "bg-blue-500/20", text: "text-blue-400", label: "Already Connected" },

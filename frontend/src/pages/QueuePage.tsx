@@ -9,11 +9,29 @@ import EmptyState from "../components/EmptyState";
 
 const STATUS_TABS = ["all", "draft", "approved", "sent", "responded"];
 
+// The queue is now fed by multiple sources. We derive each item's source from
+// the fields the backend already sets, then filter client-side. (The API can't
+// filter by source server-side yet — see backend follow-ups.)
+const SOURCE_OPTIONS = [
+  { value: "all", label: "All sources" },
+  { value: "first-touch", label: "First-touch (followers)" },
+  { value: "reactivation", label: "Reactivation" },
+  { value: "job-search", label: "Job search" },
+];
+
+function itemSource(item: QueueItem): string {
+  if (item.outreach_type === "resurrection") return "reactivation";
+  if (item.outreach_type === "warm" && item.purpose === "introduce") return "first-touch";
+  if (item.use_case === "job_search" || item.use_case === "job_target") return "job-search";
+  return "other";
+}
+
 export default function QueuePage() {
   const [items, setItems] = useState<QueueItem[]>([]);
   const [total, setTotal] = useState(0);
   const [stats, setStats] = useState<QueueStats | null>(null);
   const [activeTab, setActiveTab] = useState("all");
+  const [sourceFilter, setSourceFilter] = useState("all");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -22,7 +40,8 @@ export default function QueuePage() {
   const [editText, setEditText] = useState("");
   const [actionLoading, setActionLoading] = useState<string | null>(null);
 
-  // Regenerate state
+  // Regenerate state — a per-item "improve with AI" panel
+  const [regenOpenId, setRegenOpenId] = useState<string | null>(null);
   const [regenInstruction, setRegenInstruction] = useState("");
   const [regenLoading, setRegenLoading] = useState(false);
 
@@ -32,7 +51,9 @@ export default function QueuePage() {
 
     const statusFilter = activeTab === "all" ? undefined : activeTab;
 
-    Promise.all([fetchQueueItems(statusFilter), fetchQueueStats()])
+    // Fetch a generous page (100 = the API max) so the client-side source
+    // filter is meaningful.
+    Promise.all([fetchQueueItems(statusFilter, undefined, 100, 0), fetchQueueStats()])
       .then(([listData, statsData]) => {
         setItems(listData.items);
         setTotal(listData.total);
@@ -83,24 +104,41 @@ export default function QueuePage() {
 
   async function handleRegenerate(itemId: string) {
     setRegenLoading(true);
+    setError(null);
     try {
+      // Message edits require draft status. If the item was approved, revert it
+      // to draft first so the regenerated message can be saved (and re-reviewed).
+      const item = items.find((i) => i.id === itemId);
+      if (item && item.status === "approved") {
+        await updateQueueStatus(itemId, "draft");
+      }
+      // Generate a new version using the user's instruction, persist it, then
+      // reconcile to server state so the new draft shows in place.
       const data = await regenerateQueueMessage(itemId, regenInstruction || undefined);
-      setEditText(data.message);
+      await updateQueueMessage(itemId, data.message);
+      setRegenOpenId(null);
       setRegenInstruction("");
+      loadData();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Regeneration failed");
+      // The status may have changed (e.g. reverted to draft) before the failure —
+      // reconcile to the real server state rather than showing stale data.
+      loadData();
     } finally {
       setRegenLoading(false);
     }
   }
 
+  const visibleItems =
+    sourceFilter === "all" ? items : items.filter((i) => itemSource(i) === sourceFilter);
+
   return (
     <div>
-      <h1 className="text-2xl font-bold text-white mb-6">Outreach Queue</h1>
+      <h1 className="text-2xl font-bold text-white mb-6">Conversations</h1>
 
       {/* Stats */}
       {stats && (
-        <div className="flex gap-3 mb-4">
+        <div className="flex flex-wrap gap-3 mb-4">
           {STATUS_TABS.filter(t => t !== "all").map((status) => (
             <div key={status} className="px-3 py-1.5 bg-slate-800 border border-slate-700 rounded-lg text-center">
               <p className="text-lg font-bold text-white">{stats.by_status[status] ?? 0}</p>
@@ -128,34 +166,57 @@ export default function QueuePage() {
         </div>
       )}
 
-      {/* Tabs */}
-      <div className="flex gap-1 mb-4 bg-slate-800 rounded-lg p-1 w-fit border border-slate-700">
-        {STATUS_TABS.map((tab) => (
-          <button
-            key={tab}
-            onClick={() => setActiveTab(tab)}
-            className={`px-3 py-1.5 text-sm font-medium rounded-md capitalize transition-colors ${
-              activeTab === tab
-                ? "bg-slate-700 text-white shadow-sm"
-                : "text-slate-500 hover:text-slate-300"
-            }`}
-          >
-            {tab}
-          </button>
-        ))}
+      {/* Filters: status tabs + source dropdown */}
+      <div className="flex flex-wrap items-center gap-3 mb-4">
+        <div className="flex gap-1 bg-slate-800 rounded-lg p-1 w-fit border border-slate-700">
+          {STATUS_TABS.map((tab) => (
+            <button
+              key={tab}
+              onClick={() => setActiveTab(tab)}
+              className={`px-3 py-1.5 text-sm font-medium rounded-md capitalize transition-colors ${
+                activeTab === tab
+                  ? "bg-slate-700 text-white shadow-sm"
+                  : "text-slate-500 hover:text-slate-300"
+              }`}
+            >
+              {tab}
+            </button>
+          ))}
+        </div>
+
+        <select
+          value={sourceFilter}
+          onChange={(e) => setSourceFilter(e.target.value)}
+          className="px-3 py-1.5 bg-slate-800 border border-slate-700 rounded-lg text-sm text-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500"
+        >
+          {SOURCE_OPTIONS.map((opt) => (
+            <option key={opt.value} value={opt.value}>{opt.label}</option>
+          ))}
+        </select>
       </div>
 
       {error && <ErrorMessage message={error} onRetry={loadData} />}
       {loading && <LoadingSpinner />}
 
-      {!loading && !error && items.length === 0 && (
-        <EmptyState title="No queue items" description={activeTab !== "all" ? `No items with status "${activeTab}"` : "Generate messages from the Contacts page to add items here"} />
+      {!loading && !error && visibleItems.length === 0 && (
+        <EmptyState
+          title="No conversations here"
+          description={
+            sourceFilter !== "all"
+              ? `No ${SOURCE_OPTIONS.find((o) => o.value === sourceFilter)?.label.toLowerCase()} items${activeTab !== "all" ? ` with status "${activeTab}"` : ""}.`
+              : activeTab !== "all"
+                ? `No items with status "${activeTab}".`
+                : "Drafts appear here when a follower accepts (first-touch) or when you queue a reactivation message."
+          }
+        />
       )}
 
-      {!loading && !error && items.length > 0 && (
+      {!loading && !error && visibleItems.length > 0 && (
         <div className="space-y-3">
-          <p className="text-xs text-slate-500">{total} item(s)</p>
-          {items.map((item) => (
+          <p className="text-xs text-slate-500">
+            {visibleItems.length} item(s){sourceFilter === "all" && total !== items.length ? ` of ${total}` : ""}
+          </p>
+          {visibleItems.map((item) => (
             <div key={item.id} className="bg-slate-800 rounded-lg border border-slate-700 p-4">
               <div className="flex items-start justify-between mb-2">
                 <div>
@@ -181,7 +242,10 @@ export default function QueuePage() {
                     {item.contact_company ?? ""} — {item.purpose} / {item.use_case}
                   </p>
                 </div>
-                <StatusBadge status={item.status} />
+                <div className="flex flex-col items-end gap-1">
+                  <StatusBadge status={item.status} />
+                  <SourceTag source={itemSource(item)} />
+                </div>
               </div>
 
               {/* Message */}
@@ -194,37 +258,6 @@ export default function QueuePage() {
                     className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-lg text-sm text-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500"
                   />
 
-                  {/* Regenerate with AI */}
-                  <div className="flex items-center gap-2 mt-2 p-2 bg-slate-700/50 rounded-lg border border-slate-600/50">
-                    <input
-                      type="text"
-                      value={regenInstruction}
-                      onChange={(e) => setRegenInstruction(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter" && !regenLoading) handleRegenerate(item.id);
-                      }}
-                      placeholder="e.g. make it about Cascadia, shorter, more casual..."
-                      className="flex-1 px-2 py-1.5 bg-slate-800 border border-slate-600 rounded text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-purple-500"
-                    />
-                    <button
-                      onClick={() => handleRegenerate(item.id)}
-                      disabled={regenLoading}
-                      className="px-3 py-1.5 bg-purple-600 text-white rounded text-sm font-medium hover:bg-purple-500 disabled:opacity-50 whitespace-nowrap flex items-center gap-1.5"
-                    >
-                      {regenLoading ? (
-                        <>
-                          <div className="w-3 h-3 animate-spin rounded-full border-2 border-purple-300 border-t-white" />
-                          Generating...
-                        </>
-                      ) : (
-                        "Regenerate"
-                      )}
-                    </button>
-                  </div>
-                  <p className="text-xs text-slate-600 mt-1">
-                    Type an instruction and click Regenerate to get a new AI version
-                  </p>
-
                   <div className="flex gap-2 mt-2">
                     <button
                       onClick={() => handleSaveMessage(item.id)}
@@ -234,7 +267,7 @@ export default function QueuePage() {
                       Save
                     </button>
                     <button
-                      onClick={() => { setEditingId(null); setRegenInstruction(""); }}
+                      onClick={() => setEditingId(null)}
                       className="px-3 py-1.5 border border-slate-600 text-slate-300 rounded-lg text-sm hover:bg-slate-700"
                     >
                       Cancel
@@ -262,7 +295,13 @@ export default function QueuePage() {
                 {item.status === "draft" && (
                   <>
                     <button
-                      onClick={() => { setEditingId(item.id); setEditText(item.generated_message ?? ""); }}
+                      onClick={() => { setRegenOpenId(regenOpenId === item.id ? null : item.id); setRegenInstruction(""); setEditingId(null); }}
+                      className="px-3 py-1.5 text-sm border border-purple-500/40 text-purple-300 rounded-lg hover:bg-purple-500/10"
+                    >
+                      Regenerate with AI
+                    </button>
+                    <button
+                      onClick={() => { setEditingId(item.id); setEditText(item.generated_message ?? ""); setRegenOpenId(null); }}
                       className="px-3 py-1.5 text-sm border border-slate-600 text-slate-300 rounded-lg hover:bg-slate-700"
                     >
                       Edit
@@ -293,6 +332,12 @@ export default function QueuePage() {
                       Mark Sent
                     </button>
                     <button
+                      onClick={() => { setRegenOpenId(regenOpenId === item.id ? null : item.id); setRegenInstruction(""); setEditingId(null); }}
+                      className="px-3 py-1.5 text-sm border border-purple-500/40 text-purple-300 rounded-lg hover:bg-purple-500/10"
+                    >
+                      Regenerate with AI
+                    </button>
+                    <button
                       onClick={() => handleStatusChange(item.id, "draft")}
                       disabled={actionLoading === item.id}
                       className="px-3 py-1.5 text-sm border border-slate-600 text-slate-300 rounded-lg hover:bg-slate-700 disabled:opacity-50"
@@ -311,10 +356,61 @@ export default function QueuePage() {
                   </button>
                 )}
               </div>
+
+              {/* Regenerate-with-AI panel (drafts only — the message is editable) */}
+              {regenOpenId === item.id && (
+                <div className="mt-3 p-3 bg-slate-700/50 rounded-lg border border-purple-500/30">
+                  <label className="block text-xs text-slate-400 mb-1">
+                    Tell the AI what to change, then regenerate the message:
+                  </label>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      value={regenInstruction}
+                      onChange={(e) => setRegenInstruction(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === "Enter" && !regenLoading) handleRegenerate(item.id); }}
+                      placeholder="e.g. mention Cascadia AI, make it shorter, less salesy, ask about their work"
+                      className="flex-1 px-2 py-1.5 bg-slate-800 border border-slate-600 rounded text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-purple-500"
+                    />
+                    <button
+                      onClick={() => handleRegenerate(item.id)}
+                      disabled={regenLoading}
+                      className="px-3 py-1.5 bg-purple-600 text-white rounded text-sm font-medium hover:bg-purple-500 disabled:opacity-50 whitespace-nowrap flex items-center gap-1.5"
+                    >
+                      {regenLoading ? (
+                        <>
+                          <div className="w-3 h-3 animate-spin rounded-full border-2 border-purple-300 border-t-white" />
+                          Regenerating...
+                        </>
+                      ) : (
+                        "Regenerate message"
+                      )}
+                    </button>
+                  </div>
+                  <p className="text-xs text-slate-600 mt-1">
+                    The regenerated version is saved as a draft for review. Regenerate again or edit manually.
+                  </p>
+                </div>
+              )}
             </div>
           ))}
         </div>
       )}
     </div>
+  );
+}
+
+function SourceTag({ source }: { source: string }) {
+  const styles: Record<string, { bg: string; text: string; label: string }> = {
+    "first-touch": { bg: "bg-blue-500/20", text: "text-blue-400", label: "First-touch" },
+    reactivation: { bg: "bg-amber-500/20", text: "text-amber-400", label: "Reactivation" },
+    "job-search": { bg: "bg-purple-500/20", text: "text-purple-400", label: "Job search" },
+    other: { bg: "bg-slate-700", text: "text-slate-400", label: "Other" },
+  };
+  const style = styles[source] ?? styles.other;
+  return (
+    <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium ${style.bg} ${style.text}`}>
+      {style.label}
+    </span>
   );
 }

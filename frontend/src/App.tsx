@@ -6,7 +6,6 @@ import ContactDetailPage from "./pages/ContactDetailPage";
 import QueuePage from "./pages/QueuePage";
 import OpportunitiesPage from "./pages/OpportunitiesPage";
 import TargetCompaniesPage from "./pages/TargetCompaniesPage";
-import RecommendationsPage from "./pages/RecommendationsPage";
 import FollowersPage from "./pages/FollowersPage";
 import InboxPage from "./pages/InboxPage";
 
@@ -20,7 +19,6 @@ function App() {
           <Route path="/contacts/:id" element={<ContactDetailPage />} />
           <Route path="/queue" element={<QueuePage />} />
           <Route path="/opportunities" element={<OpportunitiesPage />} />
-          <Route path="/recommendations" element={<RecommendationsPage />} />
           <Route path="/target-companies" element={<TargetCompaniesPage />} />
           <Route path="/followers" element={<FollowersPage />} />
           <Route path="/inbox" element={<InboxPage />} />

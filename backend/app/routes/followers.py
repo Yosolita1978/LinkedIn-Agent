@@ -15,7 +15,8 @@ from collections import defaultdict
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
+from sqlalchemy import select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
@@ -43,7 +44,10 @@ from app.services.follower_connector import (
     scan_followers,
     generate_notes_for_candidates,
     connect_with_candidates,
+    profile_identity_key,
 )
+from app.services.message_generator import generate_message
+from app.services.queue_service import add_to_queue
 
 
 logger = logging.getLogger(__name__)
@@ -230,51 +234,168 @@ async def list_connection_requests(
     )
 
 
+def _key_or_none(url: str) -> str | None:
+    """Stable identity key for matching, or None if the URL is malformed."""
+    try:
+        return profile_identity_key(url)
+    except ValueError:
+        logger.warning(f"URL has no /in/ identity segment: {url}")
+        return None
+
+
 @router.post("/check-acceptances", response_model=CheckAcceptancesResponse)
 async def check_acceptances(db: AsyncSession = Depends(get_db)):
     """
-    Check if any pending connection requests have been accepted.
-    Compares pending requests against the contacts table —
-    if a profile_url exists in contacts, the request was accepted.
+    Detect accepted connection requests and bridge them into a conversation.
+
+    Two guarded, idempotent transitions (both atomic compare-and-set under
+    Postgres READ COMMITTED — a conditional UPDATE blocks the racing session,
+    which then re-reads and matches 0 rows):
+
+      1. pending → accepted              (acceptance detected: the person now
+                                          exists in the contacts table)
+      2. accepted → conversation_queued  (only the winner of this CAS generates
+                                          a first-touch message and queues it)
+
+    A re-run is a no-op for already-queued rows, and picks up any 'accepted'
+    straggler left behind by a crashed earlier run.
     """
-    pending_query = select(ConnectionRequest).where(
-        ConnectionRequest.status == "pending"
+    now = datetime.utcnow()
+
+    # Map every contact to its stable identity key → contact id.
+    contacts_result = await db.execute(select(Contact.id, Contact.linkedin_url))
+    contact_id_by_key: dict[str, object] = {}
+    for cid, url in contacts_result.all():
+        key = _key_or_none(url) if url else None
+        if key:
+            contact_id_by_key[key] = cid
+
+    # ── Transition 1: detect acceptances (pending → accepted) ──
+    pending_result = await db.execute(
+        select(ConnectionRequest).where(ConnectionRequest.status == "pending")
     )
-    result = await db.execute(pending_query)
-    pending_requests = result.scalars().all()
-
-    if not pending_requests:
-        return CheckAcceptancesResponse(
-            checked=0, newly_accepted=0, still_pending=0, accepted_names=[]
-        )
-
-    contacts_query = select(Contact.linkedin_url)
-    contacts_result = await db.execute(contacts_query)
-    contact_urls = {row[0] for row in contacts_result.all()}
+    pending_requests = pending_result.scalars().all()
 
     newly_accepted = 0
     accepted_names: list[str] = []
-    now = datetime.utcnow()
 
     for req in pending_requests:
-        req_url = req.profile_url.rstrip("/")
-        matched = any(
-            contact_url.rstrip("/") == req_url for contact_url in contact_urls
+        key = _key_or_none(req.profile_url)
+        if not key or key not in contact_id_by_key:
+            continue  # not accepted yet — still just a follower we invited
+        cas = await db.execute(
+            update(ConnectionRequest)
+            .where(
+                ConnectionRequest.id == req.id,
+                ConnectionRequest.status == "pending",
+            )
+            .values(status="accepted", accepted_at=now)
         )
-
-        if matched:
-            req.status = "accepted"
-            req.accepted_at = now
+        if cas.rowcount == 1:
             newly_accepted += 1
             accepted_names.append(req.name)
-
     await db.commit()
 
     still_pending = len(pending_requests) - newly_accepted
 
+    # ── Transition 2: bridge accepted → conversation_queued ──
+    # Pick up everything currently 'accepted' (the ones just flipped above, plus
+    # any straggler from a previous run that crashed before it could queue).
+    accepted_result = await db.execute(
+        select(ConnectionRequest).where(ConnectionRequest.status == "accepted")
+    )
+    accepted_requests = accepted_result.scalars().all()
+
+    conversation_queued = 0
+    queued_names: list[str] = []
+    errors: list[str] = []
+
+    for req in accepted_requests:
+        # Guarded CAS: only the run that flips accepted → conversation_queued
+        # proceeds to generate + queue. Losers see rowcount 0 and bail.
+        cas = await db.execute(
+            update(ConnectionRequest)
+            .where(
+                ConnectionRequest.id == req.id,
+                ConnectionRequest.status == "accepted",
+            )
+            .values(status="conversation_queued")
+        )
+        if cas.rowcount != 1:
+            await db.rollback()  # lost the race — leave the winner to do the work
+            continue
+
+        # We won the transition. Generate the message ONLY now.
+        key = _key_or_none(req.profile_url)
+        contact_id = contact_id_by_key.get(key) if key else None
+        if contact_id is None:
+            # 'accepted' implies the person is in contacts; if not, this is a
+            # real inconsistency. Roll back the flip (stays 'accepted' for a
+            # later retry) and surface it loudly instead of guessing.
+            await db.rollback()
+            msg = f"Accepted request for {req.name} has no matching contact — skipped"
+            errors.append(msg)
+            logger.error(msg)
+            continue
+
+        primary_segment = req.segments[0] if req.segments else None
+        use_case = primary_segment or "general"
+
+        try:
+            generated = await generate_message(
+                db=db,
+                contact_id=str(contact_id),
+                purpose="introduce",
+                segment=primary_segment,
+                num_variations=1,
+            )
+            message = generated["variations"][0] if generated["variations"] else ""
+
+            await add_to_queue(
+                db=db,
+                contact_id=contact_id,
+                use_case=use_case,
+                outreach_type="warm",
+                purpose="introduce",
+                generated_message=message,
+            )
+            # add_to_queue committed — the status flip + the queue draft land together.
+            conversation_queued += 1
+            queued_names.append(req.name)
+            logger.info(f"Bridge: queued first-touch draft for {req.name}")
+
+        except (ValueError, IntegrityError) as e:
+            # A queue item already exists for this contact+purpose (duplicate
+            # guard fired). The conversation is effectively already queued, so
+            # this is "already done", not a failure. Re-apply the status flip
+            # idempotently in a clean transaction and move on.
+            await db.rollback()
+            await db.execute(
+                update(ConnectionRequest)
+                .where(
+                    ConnectionRequest.id == req.id,
+                    ConnectionRequest.status == "accepted",
+                )
+                .values(status="conversation_queued")
+            )
+            await db.commit()
+            conversation_queued += 1
+            queued_names.append(req.name)
+            logger.info(f"Bridge: {req.name} already had a queued conversation ({e})")
+
+        except Exception as e:
+            # Anything else (e.g. message generation failed): roll back so the
+            # request stays 'accepted' and is retried next run. Fail loudly.
+            await db.rollback()
+            msg = f"Bridge failed for {req.name}: {e}"
+            errors.append(msg)
+            logger.error(msg)
+
     logger.info(
-        f"Acceptance check: {newly_accepted} accepted, "
-        f"{still_pending} still pending"
+        f"Acceptance check: {newly_accepted} newly accepted, "
+        f"{still_pending} still pending, "
+        f"{conversation_queued} conversations queued, "
+        f"{len(errors)} errors"
     )
 
     return CheckAcceptancesResponse(
@@ -282,6 +403,9 @@ async def check_acceptances(db: AsyncSession = Depends(get_db)):
         newly_accepted=newly_accepted,
         still_pending=still_pending,
         accepted_names=accepted_names,
+        conversation_queued=conversation_queued,
+        queued_names=queued_names,
+        errors=errors,
     )
 
 
@@ -303,8 +427,12 @@ async def connection_request_stats(db: AsyncSession = Depends(get_db)):
             by_segment=[],
         )
 
+    # 'conversation_queued' is a downstream state of 'accepted' — count it as
+    # accepted so the bridge doesn't make the acceptance rate appear to drop.
+    accepted_states = ("accepted", "conversation_queued")
+
     total = len(all_requests)
-    accepted = sum(1 for r in all_requests if r.status == "accepted")
+    accepted = sum(1 for r in all_requests if r.status in accepted_states)
     pending = sum(1 for r in all_requests if r.status == "pending")
     failed = sum(
         1 for r in all_requests
@@ -322,7 +450,7 @@ async def connection_request_stats(db: AsyncSession = Depends(get_db)):
         segments = req.segments or ["general"]
         for seg in segments:
             segment_data[seg]["total_sent"] += 1
-            if req.status == "accepted":
+            if req.status in accepted_states:
                 segment_data[seg]["accepted"] += 1
             elif req.status == "pending":
                 segment_data[seg]["pending"] += 1

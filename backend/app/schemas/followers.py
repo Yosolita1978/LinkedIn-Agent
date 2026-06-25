@@ -26,7 +26,9 @@ class ScanRequest(BaseModel):
 
 class ScanStats(BaseModel):
     followers_scraped: int = 0
-    already_in_db: int = 0
+    excluded_already_connected: int = 0   # degree badge == "1st"
+    unparseable_degree: int = 0           # degree badge missing/unreadable (skipped)
+    already_in_db: int = 0                # deduped vs contacts / connection_requests
     profiles_enriched: int = 0
     profiles_failed: int = 0
     matched_mujertech: int = 0
@@ -38,6 +40,7 @@ class ScanStats(BaseModel):
 class ScanResponse(BaseModel):
     candidates: list[FollowerCandidate]
     stats: ScanStats
+    errors: list[str] = []   # explicit per-card errors (e.g. unparseable degree)
 
 
 class GenerateNotesRequest(BaseModel):

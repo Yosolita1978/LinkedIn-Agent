@@ -8,6 +8,7 @@ import WarmthBadge from "../components/WarmthBadge";
 import LoadingSpinner from "../components/LoadingSpinner";
 import ErrorMessage from "../components/ErrorMessage";
 import EmptyState from "../components/EmptyState";
+import Funnel, { type FunnelStage } from "../components/Funnel";
 
 const HOOK_TABS = [
   { value: "", label: "All" },
@@ -113,9 +114,26 @@ export default function OpportunitiesPage() {
     }
   }
 
+  // Reactivation funnel. Only the Opportunity count is available today; the
+  // Drafted/Sent/Responded stages need source-filtered queue stats the API
+  // doesn't expose yet, so they render as explicit "not available" stages.
+  const reactivateStages: FunnelStage[] = [
+    { label: "Opportunity", count: count },
+    { label: "Drafted", count: null },
+    { label: "Sent", count: null },
+    { label: "Responded", count: null, emphasis: true },
+  ];
+
   return (
     <div>
-      <h1 className="text-2xl font-bold text-white mb-6">Opportunities</h1>
+      <h1 className="text-2xl font-bold text-white mb-1">Reactivate</h1>
+      <p className="text-slate-400 text-sm mb-6">
+        Restart dormant conversations — your second funnel.
+      </p>
+
+      <div className="mb-6">
+        <Funnel stages={reactivateStages} />
+      </div>
 
       {/* Tabs */}
       <div className="flex gap-1 mb-4 bg-slate-800 rounded-lg p-1 w-fit border border-slate-700">

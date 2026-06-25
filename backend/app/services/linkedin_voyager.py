@@ -249,9 +249,15 @@ class LinkedInVoyager:
         """
         Parse the /identity/dash/profiles response.
 
-        The 'included' array contains multiple entities — including the viewer's
-        own profile. We must only extract data from the entity that matches
-        the requested member ID to avoid mixing up profiles.
+        The 'included' array mixes the requested member's entities with the
+        VIEWER's own profile/positions and shared org entities. Every entity
+        that belongs to the requested member carries their member id in its
+        entityUrn (fsd_profile / fsd_profilePosition / fsd_memberRelationship /
+        fsd_profileEducation / ...), so we keep only those. This prevents the
+        viewer's data leaking into the scraped profile.
+
+        Connection degree comes from the MemberRelationship entity (see
+        _extract_from_entity); company comes inline from Position entities.
         """
         profile = self._empty_profile()
 
@@ -262,17 +268,15 @@ class LinkedInVoyager:
         for element in elements:
             self._extract_from_entity(element, element.get("$type", ""), profile)
 
-        # For included entities, only process those that belong to the requested profile.
-        # Each entity has an entityUrn or $id containing the member ID.
         for entity in included:
             entity_type = entity.get("$type", "")
+            entity_urn = entity.get("entityUrn", "") or entity.get("$id", "")
 
-            # Only process Profile/MiniProfile entities that match the requested member
-            if any(t in entity_type for t in ["Profile", "MiniProfile"]):
-                entity_urn = entity.get("entityUrn", "") or entity.get("$id", "") or entity.get("publicIdentifier", "")
-                # Skip entities that don't contain the requested member ID
-                if requested_member_id and entity_urn and requested_member_id not in entity_urn:
-                    continue
+            # Keep only entities belonging to the requested member. Shared org
+            # entities (Company/School) carry no member id and are skipped — we
+            # already read companyName inline from the member's Position entity.
+            if requested_member_id and entity_urn and requested_member_id not in entity_urn:
+                continue
 
             self._extract_from_entity(entity, entity_type, profile)
 
@@ -369,11 +373,30 @@ class LinkedInVoyager:
             if distance_value and not profile["connection_degree"]:
                 profile["connection_degree"] = distance_value
 
-        # Position entities (experience)
+        # Connection degree. The dash API puts it in a MemberRelationship entity,
+        # inside a union keyed by relationship state (connection / noConnection /
+        # pending / ...), with the degree in `memberDistance` (e.g. DISTANCE_2).
+        if "MemberRelationship" in entity_type:
+            union = entity.get("memberRelationshipUnion", {})
+            if isinstance(union, dict):
+                # A 'connection' branch means a 1st-degree connection. It can be
+                # inline ('connection') or a normalized URN reference ('*connection').
+                if ("connection" in union or "*connection" in union) and not profile["connection_degree"]:
+                    profile["connection_degree"] = "DISTANCE_1"
+                # Otherwise the degree is in the union's inline branch (e.g.
+                # noConnection.memberDistance = "DISTANCE_2").
+                for rel_val in union.values():
+                    if isinstance(rel_val, dict):
+                        dist = rel_val.get("memberDistance")
+                        if dist and not profile["connection_degree"]:
+                            profile["connection_degree"] = dist
+
+        # Position entities (experience). dash Positions expose companyName inline
+        # but often omit a `title` field, so we must NOT gate company on title.
         if any(t in entity_type for t in ["Position", "position"]):
             title = entity.get("title", "")
             company = entity.get("companyName", "") or entity.get("company", {}).get("name", "")
-            if title:
+            if title or company:
                 profile["experience"].append({"title": title, "company": company})
                 if company and not profile["company"]:
                     profile["company"] = company
