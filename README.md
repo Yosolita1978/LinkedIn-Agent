@@ -1,8 +1,12 @@
-# LinkedIn Intelligence & Outreach Agent
+# LinkedIn Outreach Agent
 
-A personal intelligence tool for strategic LinkedIn outreach. It analyzes your LinkedIn connections, scores relationship warmth, detects outreach opportunities, generates personalized messages with AI, and prioritizes who to contact today.
+A command center for one primary funnel: turn the people who **follow** you (but
+aren't connections yet) into **connections**, and automatically start a
+**conversation** when they accept. A smaller second funnel reactivates dormant
+conversations, and a job-search track keeps you networking with people at target
+companies.
 
-Built for three use cases:
+Built around three audiences:
 
 - **MujerTech** — Women entrepreneurs and tech professionals in Latin America
 - **Cascadia AI** — AI/ML professionals in the Pacific Northwest
@@ -10,50 +14,87 @@ Built for three use cases:
 
 ## How It Works
 
+The primary funnel — **followers → connection → conversation**:
+
 ```
-LinkedIn Data Export (CSV)
+Followers who aren't connections yet
+        │  scan your followers list (Playwright)
+        ▼
+┌──────────────────────┐
+│ Classify by degree   │  Voyager API: 1st = already connected (skip),
+│ (Voyager API)        │  2nd/3rd = candidate. Also pulls company for
+└──────────────────────┘  segmentation. Dedup vs contacts + past requests.
         │
         ▼
-┌──────────────┐     ┌──────────────┐     ┌──────────────┐
-│ Import &     │────▶│  Supabase    │◀────│  Segment     │
-│ Parse        │     │  PostgreSQL  │     │  Contacts    │
-└──────────────┘     └──────────────┘     └──────────────┘
-                            │
-        ┌───────────────────┼───────────────────┐
-        ▼                   ▼                   ▼
-┌──────────────┐   ┌──────────────┐    ┌──────────────┐
-│   Score      │   │   Detect     │    │   Generate   │
-│   Warmth     │   │   Outreach   │    │   Messages   │
-│   (0-100)    │   │   Hooks      │    │   (OpenAI)   │
-└──────────────┘   └──────────────┘    └──────────────┘
-        │                   │                   │
-        └───────────────────┼───────────────────┘
-                            ▼
-                   ┌──────────────┐
-                   │   Rank &     │
-                   │   Recommend  │
-                   └──────────────┘
-                            │
-                            ▼
-                   ┌──────────────┐
-                   │   React      │
-                   │   Dashboard  │
-                   └──────────────┘
+┌──────────────────────┐
+│ Send connection      │  AI-written, segment-aware note (≤300 chars).
+│ request + note       │
+└──────────────────────┘
+        │  request accepted?
+        ▼
+┌──────────────────────┐
+│ Accept→conversation  │  Race-safe: on acceptance, auto-generate a
+│ bridge               │  first-touch message and drop it in the queue
+└──────────────────────┘  as a draft (status: conversation_queued).
+        │
+        ▼
+┌──────────────────────┐
+│ Approve & send       │  draft → approved → sent → responded
+│ (Conversations)      │
+└──────────────────────┘
 ```
 
-## Screenshots
+A second funnel — **reactivate dormant conversations** — and the **job-search
+track** feed the same outreach queue, tagged by source.
 
-The frontend is a dark-themed dashboard with 7 pages:
+## Pages
 
-- **Dashboard** — Stats overview, warmth distribution, top recommendations
-- **Today's Outreach** — Ranked contacts to reach out to, with reasons why
-- **Contacts** — Searchable list with segment/warmth filters and pagination
-- **Contact Detail** — Profile, warmth breakdown, message history, generate & queue
-- **Queue** — Outreach pipeline: draft → approved → sent → responded
-- **Opportunities** — Resurrection hooks (dormant, promises, unanswered, waiting)
-- **Target Companies** — Manage job search target companies
+A dark-themed, mobile-first dashboard. Primary nav (4) + a job-search destination
++ utilities:
+
+**Primary**
+- **Today** — funnel command center: requests/conversations this week, the live
+  conversion funnel (Candidate → Requested → Accepted → Drafted → Sent →
+  Responded), drafts waiting for approval, and a reactivate strip
+- **Followers to Convert** — scan followers, find non-connections, write/edit AI
+  notes, send (or track) connection requests
+- **Conversations** — the outreach pipeline (draft → approved → sent → responded)
+  across all sources, with a source filter and per-message **Regenerate with AI**
+- **Reactivate** — resurrection opportunities (dormant, promise, unanswered, waiting)
+
+**Secondary**
+- **Target Companies** — manage job-search targets
+
+**Utilities**
+- **Contacts** — searchable list with segment/warmth filters · **Inbox** — synced
+  LinkedIn conversations · **Contact Detail** — profile, warmth, history, generate
 
 ## Features
+
+### Follower Scan & Connection-Degree Classification
+
+Finds followers who aren't connections yet. The followers list page exposes no
+degree badge, so classification comes from LinkedIn's **Voyager API** during
+enrichment:
+
+| Degree | Meaning | Action |
+|--------|---------|--------|
+| `DISTANCE_1` | Already a 1st-degree connection | Excluded |
+| `DISTANCE_2` / `DISTANCE_3` | Follower, not connected | **Candidate** |
+| (undeterminable) | Couldn't read degree | Skipped + reported (never guessed) |
+
+Candidates are deduplicated against existing contacts **and** past connection
+requests by stable profile identity (the `/in/` member URN, never display name).
+Enrichment also pulls company/headline so candidates can be segmented.
+
+### Accept → Conversation Bridge
+
+When a connection request is accepted, the pipeline doesn't dead-end. An
+acceptance check transitions the request `pending → accepted → conversation_queued`
+and, on winning a guarded compare-and-set, generates a segment-aware first-touch
+message and inserts it into the outreach queue as a draft. It's race-safe (atomic
+status transition + a DB uniqueness guard on contact+purpose) so two concurrent
+checks can never double-queue the same person.
 
 ### Warmth Scoring (0-100)
 
@@ -106,10 +147,15 @@ Generates personalized outreach messages using OpenAI (gpt-4o) with:
 - Resurrection hooks as conversation openers
 - Multiple variations to choose from
 - 7 purpose templates (reconnect, introduce, follow up, invite, ask advice, congratulate, share resource)
+- **Regenerate with AI** — on the Conversations page, every draft/approved message
+  has a per-item button: type an instruction ("shorter", "mention Cascadia",
+  "less salesy") and the message is regenerated and saved in place for review
 
 ### Outreach Queue
 
-A managed pipeline for tracking message status:
+A managed pipeline for tracking message status, fed by multiple sources
+(first-touch from accepted followers, reactivation, job-search) and filterable by
+source:
 
 ```
 draft → approved → sent → responded
@@ -134,12 +180,20 @@ Prevents duplicate outreach (one active item per contact). Auto-dismisses resurr
 
 ## Getting Started
 
+> For full step-by-step setup (including the LinkedIn session and DB migration),
+> see **[QUICKSTART.md](QUICKSTART.md)**.
+
+The follower funnel runs **live** against LinkedIn using a saved browser session
+(`backend/test_auth.py`, one-time). Importing your LinkedIn CSV export is optional
+and powers the supporting features (contacts, warmth, reactivation).
+
 ### Prerequisites
 
 - Python 3.12+
 - Node.js 20+
 - A [Supabase](https://supabase.com) project (free tier works)
 - An [OpenAI API key](https://platform.openai.com)
+- A LinkedIn account (for the follower scan; authenticate once via `test_auth.py`)
 
 ### 1. Clone and set up the backend
 
@@ -226,8 +280,9 @@ The backend exposes 8 routers with 30+ endpoints. Full interactive docs availabl
 | Target Companies | `/api/target-companies/` | Manage job search targets |
 | Resurrection | `/api/resurrection/` | Scan and manage outreach opportunities |
 | Generate | `/api/generate/` | AI message generation |
-| Queue | `/api/queue/` | Outreach pipeline management |
+| Queue | `/api/queue/` | Outreach pipeline (incl. per-message regenerate) |
 | Ranking | `/api/ranking/` | Daily outreach recommendations |
+| Followers | `/api/followers/` | Scan followers, send requests, accept→conversation bridge |
 
 ## Project Structure
 
@@ -238,8 +293,8 @@ linkedin-outreach-agent/
 │   │   ├── main.py              # FastAPI app entry point
 │   │   ├── config.py            # Pydantic settings
 │   │   ├── database.py          # SQLAlchemy async setup
-│   │   ├── models/              # 6 database models
-│   │   ├── routes/              # 8 API routers
+│   │   ├── models/              # database models (incl. connection_request)
+│   │   ├── routes/              # API routers (incl. followers, inbox)
 │   │   ├── services/            # Business logic
 │   │   │   ├── export_parser.py
 │   │   │   ├── warmth_scorer.py
@@ -248,14 +303,16 @@ linkedin-outreach-agent/
 │   │   │   ├── message_generator.py
 │   │   │   ├── ranking_service.py
 │   │   │   ├── queue_service.py
-│   │   │   └── linkedin_browser.py
+│   │   │   ├── follower_connector.py    # follower scan + accept→conversation bridge
+│   │   │   ├── linkedin_voyager.py      # Voyager API (degree, profile enrichment)
+│   │   │   └── linkedin_browser.py      # Playwright automation
 │   │   └── schemas/             # Pydantic validation
 │   └── .env
 ├── frontend/
 │   ├── src/
 │   │   ├── api/                 # Typed API client layer
-│   │   ├── components/          # Shared UI components
-│   │   ├── pages/               # 7 route pages
+│   │   ├── components/          # Shared UI components (incl. Funnel)
+│   │   ├── pages/               # route pages (Today, Followers, Conversations, Reactivate, ...)
 │   │   └── types/               # TypeScript interfaces
 │   └── index.html
 ├── video/
@@ -275,6 +332,7 @@ linkedin-outreach-agent/
 
 ## Documentation
 
+- [TODO / Follow-ups](docs/TODO.md) — Known gaps and next steps (frontend + backend)
 - [Architecture](docs/ARCHITECTURE.md) — System design, database schema, algorithm details
 - [Progress](docs/PROGRESS.md) — What's been built and what's next
 - [Decisions](docs/DECISIONS.md) — Architecture Decision Records

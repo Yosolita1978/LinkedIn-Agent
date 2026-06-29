@@ -26,6 +26,16 @@ function itemSource(item: QueueItem): string {
   return "other";
 }
 
+// The most recent thing that happened on an item (created / approved / sent /
+// replied). Sorting by this ascending surfaces the conversations that have been
+// quiet the longest — the ones most in need of a re-connect.
+function lastActivity(item: QueueItem): number {
+  const stamps = [item.created_at, item.approved_at, item.sent_at, item.replied_at]
+    .filter((t): t is string => Boolean(t))
+    .map((t) => new Date(t).getTime());
+  return stamps.length ? Math.max(...stamps) : 0;
+}
+
 export default function QueuePage() {
   const [items, setItems] = useState<QueueItem[]>([]);
   const [total, setTotal] = useState(0);
@@ -129,8 +139,13 @@ export default function QueuePage() {
     }
   }
 
-  const visibleItems =
-    sourceFilter === "all" ? items : items.filter((i) => itemSource(i) === sourceFilter);
+  // Stalest first: surface the conversations whose last activity was longest
+  // ago, so you're prompted to re-connect instead of forgetting them.
+  const visibleItems = (
+    sourceFilter === "all" ? items : items.filter((i) => itemSource(i) === sourceFilter)
+  )
+    .slice()
+    .sort((a, b) => lastActivity(a) - lastActivity(b));
 
   return (
     <div>
@@ -214,7 +229,7 @@ export default function QueuePage() {
       {!loading && !error && visibleItems.length > 0 && (
         <div className="space-y-3">
           <p className="text-xs text-slate-500">
-            {visibleItems.length} item(s){sourceFilter === "all" && total !== items.length ? ` of ${total}` : ""}
+            {visibleItems.length} item(s){sourceFilter === "all" && total !== items.length ? ` of ${total}` : ""} · least recent activity first
           </p>
           {visibleItems.map((item) => (
             <div key={item.id} className="bg-slate-800 rounded-lg border border-slate-700 p-4">
