@@ -2,7 +2,9 @@
 Follower connection schemas — request/response models for the follower connector.
 """
 
+from datetime import datetime
 from typing import Optional
+from uuid import UUID
 
 from pydantic import BaseModel, Field
 
@@ -16,6 +18,35 @@ class FollowerCandidate(BaseModel):
     company: str = ""
     about: str = ""
     segments: list[str]
+
+
+class BacklogCandidate(BaseModel):
+    """A persisted candidate from the follower_candidates backlog."""
+    id: UUID
+    profile_url: str
+    name: str
+    headline: Optional[str] = None
+    company: Optional[str] = None
+    location: Optional[str] = None
+    about: Optional[str] = None
+    segments: Optional[list[str]] = None
+    note: Optional[str] = None
+    status: str
+    scanned_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class BacklogListResponse(BaseModel):
+    candidates: list[BacklogCandidate]
+    total: int                     # rows matching the current status filter
+    counts: dict[str, int]         # count per status across the whole backlog
+
+
+class BacklogUpdate(BaseModel):
+    """Partial update for a backlog candidate (save a note and/or change status)."""
+    note: Optional[str] = None
+    status: Optional[str] = None
 
 
 class ScanRequest(BaseModel):
@@ -35,6 +66,7 @@ class ScanStats(BaseModel):
     matched_cascadia: int = 0
     matched_job_target: int = 0
     no_segment: int = 0
+    candidates_stored: int = 0   # new rows persisted to the backlog this scan
 
 
 class ScanResponse(BaseModel):

@@ -11,6 +11,7 @@ import LoadingSpinner from "../components/LoadingSpinner";
 import ErrorMessage from "../components/ErrorMessage";
 import EmptyState from "../components/EmptyState";
 import Funnel, { type FunnelStage } from "../components/Funnel";
+import ImportLinkedInData from "../components/ImportLinkedInData";
 
 const HOOK_TABS = [
   { value: "", label: "All" },
@@ -43,6 +44,7 @@ export default function OpportunitiesPage() {
 
   const [purposes, setPurposes] = useState<Purpose[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loaded, setLoaded] = useState(false); // true after the first load completes
   const [error, setError] = useState<string | null>(null);
 
   // Shared generate/queue state (one row open at a time, keyed by row id)
@@ -72,7 +74,7 @@ export default function OpportunitiesPage() {
         setContacts(contactData.contacts.filter((c) => c.last_message_date));
       })
       .catch((err) => setError(err instanceof Error ? err.message : "Failed to load"))
-      .finally(() => setLoading(false));
+      .finally(() => { setLoading(false); setLoaded(true); });
   }
 
   useEffect(() => { loadAll(); }, []);
@@ -173,6 +175,12 @@ export default function OpportunitiesPage() {
         <Funnel stages={reactivateStages} />
       </div>
 
+      {/* Import LinkedIn data — opens automatically when there's nothing to
+          reconnect with yet, so the oldest-first list has data to show. */}
+      {loaded && (
+        <ImportLinkedInData onImported={loadAll} defaultOpen={contacts.length === 0} />
+      )}
+
       {/* Mode toggle */}
       <div className="flex gap-1 mb-4 bg-slate-800 rounded-lg p-1 w-fit border border-slate-700">
         <button
@@ -201,7 +209,7 @@ export default function OpportunitiesPage() {
         contacts.length === 0 ? (
           <EmptyState
             title="No past conversations found"
-            description="Import your LinkedIn messages (or sync the Inbox) so the tool knows who you last talked to and when."
+            description="Upload your LinkedIn messages.csv in the Import panel above so the tool knows who you last talked to and when — then this list fills up, oldest conversation first."
           />
         ) : (
           <>

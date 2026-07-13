@@ -9,5 +9,6 @@ from app.routes.followers import router as followers_router
 from app.routes.analytics import router as analytics_router
 from app.routes.auth import router as auth_router
 from app.routes.inbox import router as inbox_router
+from app.routes.settings import router as settings_router
 
-__all__ = ["upload_router", "contacts_router", "target_companies_router", "resurrection_router", "generate_router", "queue_router", "ranking_router", "followers_router", "analytics_router", "auth_router", "inbox_router"]
+__all__ = ["upload_router", "contacts_router", "target_companies_router", "resurrection_router", "generate_router", "queue_router", "ranking_router", "followers_router", "analytics_router", "auth_router", "inbox_router", "settings_router"]

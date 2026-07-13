@@ -15,6 +15,7 @@ node_modules/
 .npm
 docs/docs
 frontend/test
+userrequest.md
 
 # Frontend build
 frontend/dist/

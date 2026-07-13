@@ -1,9 +1,15 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { listConnectionRequests } from "../api/followers";
-import { fetchQueueItems } from "../api/queue";
+import { listConnectionRequests, getConnectionRequestStats, fetchCandidates } from "../api/followers";
+import { fetchQueueItems, fetchQueueStats } from "../api/queue";
 import { fetchOpportunities } from "../api/resurrection";
-import type { ConnectionRequestRecord, QueueItem } from "../types";
+import { fetchSettings, updateSettings } from "../api/settings";
+import type {
+  ConnectionRequestRecord,
+  QueueItem,
+  QueueStats,
+  ConnectionRequestStatsResponse,
+} from "../types";
 import Funnel, { type FunnelStage } from "../components/Funnel";
 import LoadingSpinner from "../components/LoadingSpinner";
 import ErrorMessage from "../components/ErrorMessage";
@@ -26,6 +32,10 @@ export default function DashboardPage() {
   const [requests, setRequests] = useState<ConnectionRequestRecord[]>([]);
   const [drafts, setDrafts] = useState<QueueItem[]>([]);
   const [oppCount, setOppCount] = useState(0);
+  const [queueStats, setQueueStats] = useState<QueueStats | null>(null);
+  const [connStats, setConnStats] = useState<ConnectionRequestStatsResponse | null>(null);
+  const [weeklyCap, setWeeklyCap] = useState<number | null>(null);
+  const [newCandidateCount, setNewCandidateCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -36,11 +46,19 @@ export default function DashboardPage() {
       listConnectionRequests(),
       fetchQueueItems("draft", undefined, 100, 0),
       fetchOpportunities(),
+      fetchQueueStats(),
+      getConnectionRequestStats(),
+      fetchSettings(),
+      fetchCandidates("new", 1, 0),
     ])
-      .then(([reqData, draftData, oppData]) => {
+      .then(([reqData, draftData, oppData, qStats, cStats, settings, backlog]) => {
         setRequests(reqData.requests);
         setDrafts(draftData.items);
         setOppCount(oppData.count);
+        setQueueStats(qStats);
+        setConnStats(cStats);
+        setWeeklyCap(settings.weekly_request_cap);
+        setNewCandidateCount(backlog.counts["new"] ?? 0);
       })
       .catch((err) => setError(err instanceof Error ? err.message : "Failed to load"))
       .finally(() => setLoading(false));
@@ -58,19 +76,38 @@ export default function DashboardPage() {
   const acceptedCount = requests.filter((r) => ACCEPTED_STATUSES.includes(r.status)).length;
   const draftedCount = requests.filter((r) => r.status === "conversation_queued").length;
 
-  // Conversion funnel. Candidate / Sent / Responded are NOT derivable from the
-  // current API (candidates aren't persisted; queue stats aren't source-filtered),
-  // so they render as explicit "not available yet" stages — never faked.
+  // Sent / Responded now come from real queue status counts.
+  const sentCount = queueStats?.by_status["sent"] ?? 0;
+  const respondedCount = queueStats?.by_status["responded"] ?? 0;
+
+  // Conversion funnel. Every stage is now backed by real data, so there are no
+  // "not available yet" placeholders. (Candidate was dropped — no persisted
+  // candidate store exists, and an empty stage was just noise.)
   const funnelStages: FunnelStage[] = [
-    { label: "Candidate", count: null },
     { label: "Requested", count: requestedCount },
     { label: "Accepted", count: acceptedCount },
     { label: "Drafted", count: draftedCount },
-    { label: "Sent", count: null },
-    { label: "Responded", count: null, emphasis: true },
+    { label: "Sent", count: sentCount },
+    { label: "Responded", count: respondedCount, emphasis: true },
   ];
 
   const firstTouchDrafts = drafts.filter(isFirstTouch);
+
+  // Segments with at least one request sent, sorted by acceptance rate.
+  const segmentRows = (connStats?.by_segment ?? [])
+    .filter((s) => s.total_sent > 0)
+    .sort((a, b) => b.acceptance_rate - a.acceptance_rate);
+
+  async function handleSaveCap(next: number) {
+    // Optimistic: show the new cap immediately, persist in the background.
+    setWeeklyCap(next);
+    try {
+      const saved = await updateSettings({ weekly_request_cap: next });
+      setWeeklyCap(saved.weekly_request_cap);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save weekly cap");
+    }
+  }
 
   if (loading) {
     return (
@@ -87,26 +124,58 @@ export default function DashboardPage() {
 
       {error && <ErrorMessage message={error} onRetry={loadData} />}
 
-      {/* 1. Header strip — two honest numbers + a pending weekly-cap slot */}
+      {/* 1. Header strip — three real numbers, no dead slot */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-        <HeaderStat value={String(requestsSentThisWeek)} label="Requests sent this week" />
+        <WeeklyCapCard
+          sent={requestsSentThisWeek}
+          cap={weeklyCap}
+          onSave={handleSaveCap}
+        />
         <HeaderStat
           value={String(draftedCount)}
           label="Conversations started"
-          caption="all time · weekly metric pending"
+          caption="follower requests that reached a draft"
         />
-        {/* TODO(weekly-cap): the weekly invitation cap isn't implemented yet.
-            Render the slot but never a fabricated number. */}
-        <HeaderStat value="— / —" label="Weekly cap" caption="cap not set yet" pending />
+        <AcceptanceCard stats={connStats} />
       </div>
 
-      {/* 2. Conversion funnel — the hero */}
+      {/* 2. Conversion funnel — the hero, now all real */}
       <section>
         <h2 className="text-sm font-semibold text-slate-300 mb-3">Conversion funnel</h2>
         <Funnel stages={funnelStages} />
+        <p className="text-[11px] text-slate-600 mt-2">
+          Requested–Drafted track follower conversions. Sent &amp; Responded count
+          all outreach (including reconnects), so they may include non-follower contacts.
+        </p>
       </section>
 
-      {/* 3. Drafts to approve — the highest-value action */}
+      {/* 3. Acceptance by segment — which segments are actually converting */}
+      {segmentRows.length > 0 && (
+        <section>
+          <h2 className="text-sm font-semibold text-slate-300 mb-3">Acceptance by segment</h2>
+          <div className="bg-slate-800 rounded-lg border border-slate-700 divide-y divide-slate-700">
+            {segmentRows.map((s) => (
+              <div key={s.segment} className="flex items-center gap-4 p-3">
+                <span className="text-sm text-white capitalize w-28 shrink-0">{s.segment}</span>
+                <div className="flex-1 h-2 bg-slate-700 rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-emerald-500"
+                    style={{ width: `${Math.min(100, s.acceptance_rate)}%` }}
+                  />
+                </div>
+                <span className="text-sm font-medium text-emerald-400 w-12 text-right">
+                  {s.acceptance_rate}%
+                </span>
+                <span className="text-xs text-slate-500 w-24 text-right">
+                  {s.accepted}/{s.total_sent} accepted
+                </span>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* 4. Drafts to approve — the highest-value action */}
       <section>
         <div className="flex items-center justify-between mb-3">
           <h2 className="text-sm font-semibold text-slate-300">
@@ -161,25 +230,40 @@ export default function DashboardPage() {
         )}
       </section>
 
-      {/* 4. Candidates to request — no persisted candidate store yet, so this is
+      {/* 5. Candidates to request — no persisted candidate store yet, so this is
           an honest CTA into the scan flow, not fabricated rows. */}
       <section>
         <h2 className="text-sm font-semibold text-slate-300 mb-3">Candidates to request</h2>
-        <EmptyState
-          title="Find non-connection followers to request"
-          description="Candidates aren't stored between scans yet. Run a scan to find followers who aren't connected and send requests."
-          action={
-            <Link
-              to="/followers"
-              className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-500"
-            >
-              Go to Followers to Convert
-            </Link>
-          }
-        />
+        {newCandidateCount > 0 ? (
+          <Link
+            to="/followers"
+            className="flex items-center justify-between bg-slate-800 rounded-lg border border-slate-700 p-4 hover:border-slate-600 transition-colors"
+          >
+            <div>
+              <p className="text-sm font-medium text-white">
+                {newCandidateCount} {newCandidateCount === 1 ? "person" : "people"} you follow waiting in your backlog
+              </p>
+              <p className="text-xs text-slate-500">Write notes and send requests, oldest scan first.</p>
+            </div>
+            <span className="text-blue-400 text-sm">Open Backlog →</span>
+          </Link>
+        ) : (
+          <EmptyState
+            title="Find people you follow to request"
+            description="Your backlog is empty. Run a scan to find people you follow who aren't connected — they'll be saved here so you can work through them over time."
+            action={
+              <Link
+                to="/followers"
+                className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-500"
+              >
+                Go to People to Convert
+              </Link>
+            }
+          />
+        )}
       </section>
 
-      {/* 5. Reactivate strip */}
+      {/* 6. Reactivate strip */}
       <section>
         <Link
           to="/opportunities"
@@ -194,6 +278,100 @@ export default function DashboardPage() {
           <span className="text-blue-400 text-sm">Open Reactivate →</span>
         </Link>
       </section>
+    </div>
+  );
+}
+
+// Weekly-cap progress meter with an inline, editable target.
+function WeeklyCapCard({
+  sent,
+  cap,
+  onSave,
+}: {
+  sent: number;
+  cap: number | null;
+  onSave: (next: number) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
+
+  function startEdit() {
+    setDraft(cap ? String(cap) : "");
+    setEditing(true);
+  }
+
+  function commit() {
+    const next = parseInt(draft, 10);
+    if (!Number.isNaN(next) && next >= 1 && next <= 1000) {
+      onSave(next);
+    }
+    setEditing(false);
+  }
+
+  const pct = cap && cap > 0 ? Math.min(100, Math.round((sent / cap) * 100)) : 0;
+
+  return (
+    <div className="bg-slate-800 rounded-lg border border-slate-700 p-4">
+      <div className="flex items-baseline gap-1">
+        <p className="text-3xl font-bold text-white">{sent}</p>
+        <span className="text-lg text-slate-500">/</span>
+        {editing ? (
+          <input
+            type="number"
+            min={1}
+            max={1000}
+            autoFocus
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onBlur={commit}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") commit();
+              if (e.key === "Escape") setEditing(false);
+            }}
+            className="w-16 bg-slate-900 border border-blue-500 rounded px-1 text-lg font-bold text-white"
+          />
+        ) : (
+          <button
+            onClick={startEdit}
+            className="text-lg font-bold text-slate-300 hover:text-blue-400"
+            title="Click to set your weekly target"
+          >
+            {cap ?? "—"}
+          </button>
+        )}
+      </div>
+      <p className="text-sm text-slate-400 mt-1">Requests this week / cap</p>
+
+      <div className="mt-2 h-1.5 bg-slate-700 rounded-full overflow-hidden">
+        <div
+          className={`h-full ${pct >= 100 ? "bg-amber-500" : "bg-blue-500"}`}
+          style={{ width: `${pct}%` }}
+        />
+      </div>
+      <button
+        onClick={startEdit}
+        className="text-[11px] text-slate-600 mt-1 hover:text-blue-400"
+      >
+        {cap ? "Edit weekly cap" : "Set a weekly cap"}
+      </button>
+    </div>
+  );
+}
+
+// Overall acceptance-rate headline. Honest-empty until any request exists.
+function AcceptanceCard({ stats }: { stats: ConnectionRequestStatsResponse | null }) {
+  const hasData = stats !== null && stats.total_requests > 0;
+  return (
+    <div className="bg-slate-800 rounded-lg border border-slate-700 p-4">
+      <p className={`text-3xl font-bold ${hasData ? "text-emerald-400" : "text-slate-600"}`}>
+        {hasData ? `${stats.overall_acceptance_rate}%` : "—"}
+      </p>
+      <p className="text-sm text-slate-400 mt-1">Acceptance rate</p>
+      <p className="text-[11px] text-slate-600 mt-0.5">
+        {hasData
+          ? `${stats.total_accepted} of ${stats.total_requests} accepted`
+          : "no requests sent yet"}
+      </p>
     </div>
   );
 }

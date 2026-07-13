@@ -10,9 +10,10 @@ import type {
 } from "../types";
 import SegmentBadge from "../components/SegmentBadge";
 import ErrorMessage from "../components/ErrorMessage";
+import BacklogTab from "../components/BacklogTab";
 
 type Phase = "idle" | "scanning" | "candidates" | "generating" | "reviewing" | "saving" | "saved";
-type Tab = "scan" | "requests";
+type Tab = "scan" | "backlog" | "requests";
 
 const SEGMENT_OPTIONS = [
   { value: "mujertech", label: "MujerTech" },
@@ -275,9 +276,9 @@ export default function FollowersPage() {
 
   return (
     <div>
-      <h1 className="text-2xl font-bold text-white mb-2">Followers to Convert</h1>
+      <h1 className="text-2xl font-bold text-white mb-2">People to Convert</h1>
       <p className="text-slate-400 text-sm mb-6">
-        Find followers who aren't connections yet, write a personalized note, and send the request. Segmented candidates are prioritized first.
+        Scans the people <span className="text-slate-300">you follow</span> who aren't connections yet, writes a personalized note, and helps you send the request. Segmented candidates are prioritized first.
       </p>
 
       {/* ── Tabs ── */}
@@ -291,6 +292,16 @@ export default function FollowersPage() {
           }`}
         >
           New Scan
+        </button>
+        <button
+          onClick={() => setActiveTab("backlog")}
+          className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+            activeTab === "backlog"
+              ? "border-blue-500 text-blue-400"
+              : "border-transparent text-slate-400 hover:text-slate-300"
+          }`}
+        >
+          Backlog
         </button>
         <button
           onClick={() => setActiveTab("requests")}
@@ -319,7 +330,7 @@ export default function FollowersPage() {
               <div className="space-y-4">
                 <div>
                   <label className="block text-sm text-slate-400 mb-1">
-                    How many followers to check
+                    How many people to check
                   </label>
                   <input
                     type="number"
@@ -329,7 +340,7 @@ export default function FollowersPage() {
                     max={200}
                     className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-lg text-sm text-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500"
                   />
-                  <p className="text-xs text-slate-500 mt-1">We'll scroll through your followers list and pick up this many</p>
+                  <p className="text-xs text-slate-500 mt-1">We'll scroll through your Following list and pick up this many</p>
                 </div>
 
                 <div>
@@ -371,7 +382,7 @@ export default function FollowersPage() {
               {scanStats && (
                 <div className="mb-5 p-4 bg-slate-800 rounded-lg border border-slate-700">
                   <p className="text-sm text-slate-300">
-                    Found <span className="text-white font-semibold">{candidates.length}</span> follower{candidates.length !== 1 ? "s" : ""} who {candidates.length === 1 ? "is" : "are"} not yet connected.
+                    Found <span className="text-white font-semibold">{candidates.length}</span> {candidates.length === 1 ? "person" : "people"} you follow who {candidates.length === 1 ? "is" : "are"} not yet connected.
                   </p>
 
                   {/* Why others were excluded — the badge-based classification */}
@@ -429,9 +440,9 @@ export default function FollowersPage() {
 
               {candidates.length === 0 ? (
                 <div className="text-center py-12">
-                  <p className="text-slate-400 text-lg">No new followers found</p>
+                  <p className="text-slate-400 text-lg">No new people found</p>
                   <p className="text-slate-500 text-sm mt-1">
-                    Everyone in this batch is already in your network. Try scanning more followers.
+                    Everyone in this batch is already in your network. Try scanning more people.
                   </p>
                   <button
                     onClick={handleReset}
@@ -778,6 +789,11 @@ export default function FollowersPage() {
       )}
 
       {/* ══════════════════════════════════════════════════════════ */}
+      {/* TAB: Backlog (persisted candidates)                      */}
+      {/* ══════════════════════════════════════════════════════════ */}
+      {activeTab === "backlog" && <BacklogTab />}
+
+      {/* ══════════════════════════════════════════════════════════ */}
       {/* TAB: Past Requests                                       */}
       {/* ══════════════════════════════════════════════════════════ */}
       {activeTab === "requests" && (
@@ -1056,7 +1072,7 @@ function RequestStatusBadge({ status }: { status: string }) {
 const SCAN_STEPS = [
   { label: "Opening LinkedIn...", duration: 3000 },
   { label: "Verifying you're logged in...", duration: 2000 },
-  { label: "Reading your followers list...", duration: 5000 },
+  { label: "Reading your Following list...", duration: 5000 },
   { label: "Looking up profile details...", duration: 2000 },
 ];
 

@@ -17,10 +17,11 @@ from typing import Optional
 
 from agents import Agent, Runner, trace, set_default_openai_key
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
-from app.models import Contact, ConnectionRequest
+from app.models import Contact, ConnectionRequest, FollowerCandidate
 from app.services.linkedin_browser import LinkedInBrowser, random_delay
 from app.services.linkedin_voyager import LinkedInVoyager, extract_profile_id
 from app.services.segmenter import (
@@ -42,14 +43,50 @@ set_default_openai_key(settings.openai_api_key)
 # Connection Note Agent — short, punchy notes for connection requests
 # ============================================================================
 
-connection_note_agent = Agent(
-    name="ConnectionNoteGenerator",
-    instructions=f"""You are helping write LinkedIn connection request notes for {settings.persona_name}, a {settings.persona_title} based in {settings.persona_location}.
+def _env_persona() -> dict:
+    """Persona straight from .env — the fallback when no DB override is passed."""
+    return {
+        "persona_name": settings.persona_name,
+        "persona_title": settings.persona_title,
+        "persona_location": settings.persona_location,
+        "persona_bio": settings.persona_bio,
+        "persona_interests": settings.persona_interests,
+    }
+
+
+def build_note_agent(persona: dict) -> Agent:
+    """
+    Build the connection-note agent from a persona dict (effective values from
+    the Settings UI / DB, or .env fallback). Built per note batch rather than at
+    import time so edits to your persona take effect without a restart.
+
+    The bio/interests are YOUR side of the common ground — without them, notes
+    fall back to title/location only.
+    """
+    name = persona["persona_name"]
+    lines = [
+        f"You are writing LinkedIn connection notes AS {name}, "
+        f"a {persona['persona_title']} based in {persona['persona_location']}."
+    ]
+    if persona.get("persona_bio"):
+        lines.append(f"About {name}: {persona['persona_bio']}")
+    if persona.get("persona_interests"):
+        lines.append(f"{name}'s interests: {persona['persona_interests']}")
+    background = "\n".join(lines)
+
+    return Agent(
+        name="ConnectionNoteGenerator",
+        instructions=f"""{background}
+
+Your job: write a short connection note that opens with genuine COMMON GROUND
+between {name} and the person — a shared role, community, technology, interest,
+or background. Infer it from the person's profile (especially their About
+section) and {name}'s background above.
 
 Connection notes must be:
 - VERY short (1-2 sentences, under 280 characters total)
-- Personal — mention something specific about the person
-- Clear about why you want to connect
+- Lead with the specific thing you share or admire — name it concretely
+  (e.g. a shared community, employer, technology, or focus area)
 - Warm and genuine, not salesy
 
 Never use:
@@ -57,10 +94,13 @@ Never use:
 - Excessive enthusiasm or exclamation points
 - Corporate jargon
 - Phrases like "I'd love to pick your brain"
+- A shared detail you cannot actually see in the profile or background above —
+  NEVER invent a commonality. If there's no real overlap, lead with specific,
+  genuine interest in their work instead.
 
-Write as {settings.persona_name} in first person. Output ONLY the note text, nothing else.""",
-    model="gpt-4o",
-)
+Write as {name} in first person. Output ONLY the note text, nothing else.""",
+        model="gpt-4o",
+    )
 
 
 # ============================================================================
@@ -84,7 +124,7 @@ SEGMENT_NOTE_CONTEXTS = {
         "or referrals."
     ),
     "general": (
-        f"This person follows {settings.persona_name} but doesn't match a specific segment. "
+        f"{settings.persona_name} follows this person but they don't match a specific segment. "
         "Write a friendly, genuine note based on their profile. Mention "
         "something specific about their work or background that caught your eye. "
         "Keep it natural — no need to explain why you're connecting."
@@ -184,13 +224,17 @@ def segment_profile(
 # Connection Note Generation
 # ============================================================================
 
-async def generate_connection_note(profile: dict, segment: str) -> str:
+async def generate_connection_note(
+    profile: dict, segment: str, persona: dict, agent: Agent
+) -> str:
     """
-    Generate a personalized connection note for a follower (≤300 chars).
+    Generate a personalized connection note for a candidate (≤300 chars).
 
     Args:
         profile: dict with name, headline, company, location, about
         segment: the primary segment this person matched
+        persona: effective persona dict (DB override or .env fallback)
+        agent: the note agent prebuilt from `persona` (see build_note_agent)
 
     Returns: connection note string
     """
@@ -207,7 +251,9 @@ async def generate_connection_note(profile: dict, segment: str) -> str:
     if profile.get("location"):
         prompt_parts.append(f"Location: {profile['location']}")
     if profile.get("about"):
-        about = profile["about"][:300]
+        # The About section is the richest source of common ground, so give the
+        # model most of it (capped to keep the prompt reasonable).
+        about = profile["about"][:1200]
         prompt_parts.append(f"About: {about}")
 
     segment_context = SEGMENT_NOTE_CONTEXTS.get(segment, "")
@@ -216,14 +262,18 @@ async def generate_connection_note(profile: dict, segment: str) -> str:
 
     prompt_parts.extend([
         "",
-        f"They follow {settings.persona_name} on LinkedIn but aren't connected yet.",
+        f"{persona['persona_name']} follows this person on LinkedIn but isn't connected yet.",
+        "Find the strongest genuine common ground between the two of you — prefer "
+        "something specific from their About section — and open the note with it. "
+        "If there is no real shared thread, lead with specific interest in their "
+        "work. Never invent a connection.",
         "Write ONLY the note text. Keep it under 280 characters.",
     ])
 
     prompt = "\n".join(prompt_parts)
 
     with trace("Connection note generation"):
-        result = await Runner.run(connection_note_agent, prompt)
+        result = await Runner.run(agent, prompt)
 
     note = result.final_output.strip()
 
@@ -279,6 +329,7 @@ async def scan_followers(
         "matched_cascadia": 0,
         "matched_job_target": 0,
         "no_segment": 0,
+        "candidates_stored": 0,   # new rows persisted to the backlog this scan
     }
 
     # Explicit per-card errors (e.g. degree could not be parsed). We surface
@@ -388,6 +439,14 @@ async def scan_followers(
             # it loudly rather than swallowing it silently.
             logger.warning(f"  Stored URL has no /in/ identity segment: {url}")
 
+    # Also skip anyone already in the persistent backlog, regardless of their
+    # status (new/noted/requested/skipped). This is what makes re-scanning
+    # accumulate — each run finds the NEXT batch of new people, not repeats.
+    candidate_keys = await db.execute(select(FollowerCandidate.identity_key))
+    for (ikey,) in candidate_keys.all():
+        if ikey:
+            existing_keys.add(ikey)
+
     # Get target companies for job_target segmentation
     target_companies = await get_target_company_names(db)
 
@@ -448,24 +507,24 @@ async def scan_followers(
             stats["profiles_failed"] += 1
             continue
 
-        # Authoritative "already a connection?" check, from the enriched profile.
-        # Voyager returns the connection degree (DISTANCE_1/2/3). The followers
-        # list page exposes no degree signal, so this is where classification
-        # happens. We never default an unknown degree to "candidate": if it can't
-        # be determined, record an explicit error and skip (no guess, no fallback).
+        # "Already a connection?" check. The signal we care about is whether the
+        # person needs a Connect request (not connected) or already has a Connect
+        # done (1st-degree → belongs to the reactivation flow instead).
+        #
+        # Voyager exposes this as the connection degree (DISTANCE_1/2/3), but the
+        # field isn't always populated (e.g. when enrichment falls back to the
+        # browser scrape). We only EXCLUDE on a positive 1st-degree signal — an
+        # unknown/missing degree is NOT a skip: people on your Following list are
+        # overwhelmingly non-connections, which is exactly who we want to reach.
+        # A stray already-connected person is caught at send time, when
+        # send_connection_request returns "already_connected".
         degree = str(profile.get("connection_degree", "")).upper()
-        if not degree:
-            msg = f"Could not determine connection degree for {follower['profile_url']}"
-            errors.append(msg)
-            stats["unparseable_degree"] += 1
-            logger.warning(f"  {msg}")
-            continue
         if "DISTANCE_1" in degree:
             stats["excluded_already_connected"] += 1
             logger.info(f"  Excluding {follower['name']} — already a 1st-degree connection")
             continue
 
-        # DISTANCE_2 / DISTANCE_3 → a follower who is not a connection → candidate
+        # Not connected (or degree unknown) → a connect candidate.
         stats["profiles_enriched"] += 1
 
         # Step 5: Segment using the enriched profile data
@@ -516,9 +575,38 @@ async def scan_followers(
         stats["profiles_enriched"] -= final_removed
         stats["no_segment"] = max(0, stats["no_segment"] - final_removed)
 
+    # Persist the new candidates to the backlog so progress survives between
+    # sessions. They were already deduped against existing rows above, so
+    # on_conflict_do_nothing is just a safety net against intra-scan races.
+    for c in candidates:
+        try:
+            ikey = profile_identity_key(c["profile_url"])
+        except ValueError:
+            continue
+        stmt = (
+            pg_insert(FollowerCandidate)
+            .values(
+                identity_key=ikey,
+                profile_url=c["profile_url"],
+                name=c.get("name") or "",
+                headline=c.get("headline") or None,
+                company=c.get("company") or None,
+                location=c.get("location") or None,
+                about=c.get("about") or None,
+                segments=c.get("segments") or None,
+                status="new",
+            )
+            .on_conflict_do_nothing(index_elements=["identity_key"])
+        )
+        res = await db.execute(stmt)
+        if res.rowcount != 0:
+            stats["candidates_stored"] += 1
+    await db.commit()
+
     logger.info(
         f"Scan complete: {len(candidates)} candidates "
-        f"(mujertech={stats['matched_mujertech']}, "
+        f"({stats['candidates_stored']} stored to backlog; "
+        f"mujertech={stats['matched_mujertech']}, "
         f"cascadia={stats['matched_cascadia']}, "
         f"job_target={stats['matched_job_target']})"
     )
@@ -530,20 +618,32 @@ async def scan_followers(
 # Phase 2: Generate Notes — create personalized notes for user review
 # ============================================================================
 
-async def generate_notes_for_candidates(candidates: list[dict]) -> list[dict]:
+async def generate_notes_for_candidates(
+    candidates: list[dict], persona: dict | None = None
+) -> list[dict]:
     """
     Generate personalized connection notes for candidates.
     Returns candidates with a "note" field added.
     Does NOT send anything — just generates notes for user review.
+
+    Args:
+        candidates: candidate dicts (with name/headline/company/about/segments)
+        persona: effective persona dict (DB override or .env fallback). When
+                 None, falls back to the .env persona so existing callers and
+                 tests keep working unchanged.
     """
     logger.info(f"Generating notes for {len(candidates)} candidates")
+
+    # Build the agent once per batch from the effective persona.
+    persona = persona or _env_persona()
+    agent = build_note_agent(persona)
 
     results = []
     for i, candidate in enumerate(candidates):
         primary_segment = candidate["segments"][0] if candidate["segments"] else "general"
 
         try:
-            note = await generate_connection_note(candidate, primary_segment)
+            note = await generate_connection_note(candidate, primary_segment, persona, agent)
             logger.info(f"  Note for {candidate['name']} ({len(note)} chars): {note[:60]}...")
         except Exception as e:
             logger.error(f"  Note generation failed for {candidate['name']}: {e}")

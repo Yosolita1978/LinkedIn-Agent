@@ -13,15 +13,17 @@ Flow:
 import logging
 from collections import defaultdict
 from datetime import datetime
+from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select, update
+from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import select, update, func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.models.connection_request import ConnectionRequest
 from app.models.contact import Contact
+from app.models.follower_candidate import FollowerCandidate
 from app.schemas.followers import (
     ScanRequest,
     ScanResponse,
@@ -31,6 +33,9 @@ from app.schemas.followers import (
     ConnectResponse,
     TrackRequest,
     TrackResponse,
+    BacklogCandidate,
+    BacklogListResponse,
+    BacklogUpdate,
 )
 from app.schemas.connection_requests import (
     ConnectionRequestOut,
@@ -48,6 +53,7 @@ from app.services.follower_connector import (
 )
 from app.services.message_generator import generate_message
 from app.services.queue_service import add_to_queue
+from app.routes.settings import effective_persona, get_or_create_settings
 
 
 logger = logging.getLogger(__name__)
@@ -105,19 +111,101 @@ async def scan_followers_route(
         await browser.stop()
 
 
+@router.get("/candidates", response_model=BacklogListResponse)
+async def list_candidates(
+    status: str | None = Query(None),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    List persisted backlog candidates, paginated. Optionally filter by status
+    (new / noted / requested / skipped). Ordered: segmented candidates first
+    (more to personalize on), then oldest scan first so you work FIFO.
+    """
+    base = select(FollowerCandidate)
+    if status:
+        base = base.where(FollowerCandidate.status == status)
+
+    count_stmt = select(func.count(FollowerCandidate.id))
+    if status:
+        count_stmt = count_stmt.where(FollowerCandidate.status == status)
+    total = (await db.execute(count_stmt)).scalar() or 0
+
+    # Per-status counts across the whole backlog (for the tab badges).
+    status_rows = await db.execute(
+        select(FollowerCandidate.status, func.count(FollowerCandidate.id))
+        .group_by(FollowerCandidate.status)
+    )
+    counts = {row[0]: row[1] for row in status_rows.all()}
+
+    stmt = (
+        base.order_by(
+            func.coalesce(func.array_length(FollowerCandidate.segments, 1), 0).desc(),
+            FollowerCandidate.scanned_at.asc(),
+        )
+        .limit(limit)
+        .offset(offset)
+    )
+    rows = (await db.execute(stmt)).scalars().all()
+
+    return BacklogListResponse(
+        candidates=[BacklogCandidate.model_validate(r) for r in rows],
+        total=total,
+        counts=counts,
+    )
+
+
+@router.patch("/candidates/{candidate_id}", response_model=BacklogCandidate)
+async def update_candidate(
+    candidate_id: UUID,
+    update_data: BacklogUpdate,
+    db: AsyncSession = Depends(get_db),
+):
+    """Save a note and/or change a candidate's status (e.g. mark 'skipped')."""
+    result = await db.execute(
+        select(FollowerCandidate).where(FollowerCandidate.id == candidate_id)
+    )
+    candidate = result.scalar_one_or_none()
+    if candidate is None:
+        raise HTTPException(status_code=404, detail="Candidate not found")
+
+    data = update_data.model_dump(exclude_unset=True)
+    if "note" in data:
+        candidate.note = data["note"]
+        # Saving a note advances a 'new' candidate to 'noted' unless the caller
+        # set an explicit status in the same request.
+        if "status" not in data and candidate.status == "new":
+            candidate.status = "noted"
+    if "status" in data and data["status"] is not None:
+        candidate.status = data["status"]
+
+    await db.commit()
+    await db.refresh(candidate)
+    return BacklogCandidate.model_validate(candidate)
+
+
 @router.post("/generate-notes", response_model=GenerateNotesResponse)
-async def generate_notes_route(request: GenerateNotesRequest):
+async def generate_notes_route(
+    request: GenerateNotesRequest,
+    db: AsyncSession = Depends(get_db),
+):
     """
     Generate personalized connection notes for selected candidates.
     Returns candidates with notes for user review/editing.
     Does NOT send any connection requests.
+
+    Uses the effective persona (Settings UI override, or .env fallback) so the
+    notes reflect who you are without needing a restart.
     """
     if not request.candidates:
         raise HTTPException(status_code=400, detail="No candidates provided")
 
     try:
+        setting = await get_or_create_settings(db)
+        persona = effective_persona(setting)
         candidates_dicts = [c.model_dump() for c in request.candidates]
-        results = await generate_notes_for_candidates(candidates_dicts)
+        results = await generate_notes_for_candidates(candidates_dicts, persona)
         return {"candidates": results}
     except Exception as e:
         logger.error(f"Note generation failed: {e}")
@@ -193,6 +281,7 @@ async def track_connection_requests(
     if not request.candidates:
         raise HTTPException(status_code=400, detail="No candidates provided")
 
+    requested_keys: list[str] = []
     for candidate in request.candidates:
         connection_request = ConnectionRequest(
             profile_url=candidate.profile_url,
@@ -205,6 +294,18 @@ async def track_connection_requests(
             status="pending",
         )
         db.add(connection_request)
+        try:
+            requested_keys.append(profile_identity_key(candidate.profile_url))
+        except ValueError:
+            pass
+
+    # Mark these people 'requested' in the backlog so they drop off the to-do list.
+    if requested_keys:
+        await db.execute(
+            update(FollowerCandidate)
+            .where(FollowerCandidate.identity_key.in_(requested_keys))
+            .values(status="requested")
+        )
 
     await db.commit()
     logger.info(f"Tracked {len(request.candidates)} manually-sent connection requests")

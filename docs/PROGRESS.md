@@ -1,7 +1,9 @@
 # LinkedIn Intelligence & Outreach Agent - Progress Report
 
-**Last Updated**: March 23, 2026
-**Status**: Phase 1 Quick Fixes Complete + Inbox Sync (Playwright) + Core Automation In Progress
+**Last Updated**: June 30, 2026
+**Status**: Outreach loop reworked — Following → Connect → Backlog, Reconnect via CSV, useful dashboard + Settings/persona UI
+
+> For the detailed June 30, 2026 changes, see [CHANGELOG.md](CHANGELOG.md) `[0.10.0]`.
 
 ---
 
@@ -29,6 +31,9 @@ All tables created in Supabase via SQLAlchemy async:
 | `target_companies` | Job search targets | name, notes |
 | `outreach_queue_items` | Message queue | status, generated_message |
 | `data_uploads` | Upload tracking | file_type, records_processed |
+| `connection_requests` | Sent follower requests | profile_url, status, segments, note_sent |
+| `app_settings` | Weekly cap + persona (singleton) | weekly_request_cap, persona_* |
+| `follower_candidates` | Persistent scan backlog | identity_key, status, note, segments |
 
 **Files:**
 - `backend/app/models/contact.py`

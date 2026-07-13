@@ -16,7 +16,11 @@ export async function apiFetch<T>(
   const url = `${BASE_URL}${path}`;
 
   const headers: Record<string, string> = {};
-  if (options?.method && ["POST", "PATCH", "PUT"].includes(options.method)) {
+  // For file uploads (FormData) the browser must set the multipart Content-Type
+  // with its boundary, so only force JSON for non-FormData bodies.
+  const isFormData =
+    typeof FormData !== "undefined" && options?.body instanceof FormData;
+  if (options?.method && ["POST", "PATCH", "PUT"].includes(options.method) && !isFormData) {
     headers["Content-Type"] = "application/json";
   }
 

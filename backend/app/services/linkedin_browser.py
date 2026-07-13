@@ -92,6 +92,12 @@ class LinkedInBrowser:
     LOGIN_URL = "https://www.linkedin.com/login"
     CONNECTIONS_URL = "https://www.linkedin.com/mynetwork/invite-connect/connections/"
     FOLLOWERS_URL = "https://www.linkedin.com/mynetwork/network-manager/people-follow/followers/"
+    # People YOU follow (not the people who follow you). This is the list we
+    # convert into connections. The page uses hashed, rotating CSS classes with
+    # no stable card container, so scrape_followers anchors on profile links
+    # (a[href*="/in/"]) via _extract_profile_links_on_page — NOT the legacy
+    # FOLLOWER_CARD_SELECTORS below (kept only for the old search-results DOM).
+    FOLLOWING_URL = "https://www.linkedin.com/mynetwork/network-manager/people-follow/following/"
 
     # Fallback selectors for a single follower card. LinkedIn changes the DOM
     # frequently, so we keep several and fail loudly (ScrapingError) if none
@@ -407,51 +413,51 @@ class LinkedInBrowser:
     @async_retry(max_attempts=3, base_delay=2.0, exceptions=(PlaywrightTimeout, ScrapingError))
     async def scrape_followers(self, max_items: int = 50) -> list[dict]:
         """
-        Scrape the followers list page with pagination.
+        Scrape the "Following" list page (people YOU follow) with pagination.
+
+        Note: the method keeps its historical name, but it now reads the
+        Following tab — that is the audience we convert into connections.
 
         Args:
-            max_items: Maximum number of followers to scrape (default 50)
+            max_items: Maximum number of people to scrape (default 50)
 
         Returns list of dicts with: name, headline, profile_url
         """
-        logger.info(f"Starting followers scrape (max {max_items} items)")
+        logger.info(f"Starting following-list scrape (max {max_items} items)")
 
         # Navigate with human-like delays
-        await self._navigate_with_delay(self.FOLLOWERS_URL)
+        await self._navigate_with_delay(self.FOLLOWING_URL)
 
-        # Fail loudly if the follower list never renders (per ADR-003: keep
-        # fallback selectors, fail loud when none match — no silent empty list).
+        # The network-manager Following/Followers pages render with hashed,
+        # rotating CSS class names and no stable card container or data-view-name.
+        # The one durable signal is the profile link itself (a[href*="/in/"]),
+        # so we anchor on that instead of a card class. Fail loudly if not even
+        # the profile links render.
         try:
-            await self._page.wait_for_selector(
-                ", ".join(self.FOLLOWER_CARD_SELECTORS), timeout=10000
-            )
+            await self._page.wait_for_selector('a[href*="/in/"]', timeout=10000)
         except PlaywrightTimeout:
-            logger.error("Follower cards never rendered on the page")
+            logger.error("No profile links rendered on your Following list")
             raise ScrapingError(
-                "Could not find any follower cards — the followers page "
+                "Could not find anyone on your Following list — the page "
                 "structure may have changed, or the list is empty."
             )
 
-        followers = []
+        followers: list[dict] = []
         seen_urls = set()
         no_new_items_count = 0
         max_scroll_attempts = 20  # Safety limit
 
         for scroll_attempt in range(max_scroll_attempts):
-            # Query all cards currently on page, trying fallback selectors in order
-            cards = await self._query_follower_cards()
             initial_count = len(followers)
 
-            for card in cards:
+            # Collect everyone currently in the DOM by their profile link.
+            for person in await self._extract_profile_links_on_page():
                 if len(followers) >= max_items:
                     break
+                if person["profile_url"] not in seen_urls:
+                    seen_urls.add(person["profile_url"])
+                    followers.append(person)
 
-                follower = await self._extract_follower_card(card)
-                if follower and follower["profile_url"] not in seen_urls:
-                    seen_urls.add(follower["profile_url"])
-                    followers.append(follower)
-
-            # Check if we've reached our limit
             if len(followers) >= max_items:
                 logger.info(f"Reached max items limit ({max_items})")
                 break
@@ -465,14 +471,58 @@ class LinkedInBrowser:
                     break
             else:
                 no_new_items_count = 0
-                logger.debug(f"Found {new_items} new followers (total: {len(followers)})")
+                logger.debug(f"Found {new_items} new people (total: {len(followers)})")
 
             # Scroll to load more
             await self._human_scroll(800, steps=4)
             await random_delay(1.5, 3.0)
 
-        logger.info(f"Scraped {len(followers)} followers")
+        logger.info(f"Scraped {len(followers)} people from Following list")
         return followers
+
+    async def _extract_profile_links_on_page(self) -> list[dict]:
+        """
+        Extract people from the current DOM by their profile links.
+
+        Because the Following/Followers pages use hashed, rotating class names
+        with no stable card container, we anchor on the only durable signal:
+        anchor tags linking to a /in/ profile. We group links by their /in/<id>
+        identity (the same person often has both an avatar link and a name
+        link), pick the longest non-empty link text as the name, and leave the
+        headline to Voyager enrichment downstream.
+
+        Returns list of dicts with: name, headline (always ""), profile_url.
+        """
+        links = await self._page.query_selector_all('a[href*="/in/"]')
+        by_id: dict[str, dict] = {}
+
+        for link in links:
+            href = await link.get_attribute("href")
+            if not href or "/in/" not in href:
+                continue
+
+            # Identity = the /in/<id> path segment, lowercased (ignore query/hash)
+            path = href.split("?")[0].split("#")[0].rstrip("/")
+            ident = path.split("/in/")[-1].lower()
+            if not ident:
+                continue
+
+            text = (await link.inner_text()).strip()
+            # The avatar/image link often carries presence text instead of a name.
+            if "Status is" in text:
+                text = ""
+
+            full_url = href if href.startswith("http") else f"{self.LINKEDIN_BASE_URL}{href}"
+            clean_url = full_url.split("?")[0].split("#")[0]
+
+            existing = by_id.get(ident)
+            if existing is None:
+                by_id[ident] = {"name": text, "headline": "", "profile_url": clean_url}
+            elif text and len(text) > len(existing["name"]):
+                # Prefer the link that actually carries the person's name.
+                existing["name"] = text
+
+        return list(by_id.values())
 
     async def _query_follower_cards(self) -> list:
         """Query follower cards, trying fallback selectors in order (ADR-003)."""

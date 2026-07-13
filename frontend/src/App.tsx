@@ -8,6 +8,7 @@ import OpportunitiesPage from "./pages/OpportunitiesPage";
 import TargetCompaniesPage from "./pages/TargetCompaniesPage";
 import FollowersPage from "./pages/FollowersPage";
 import InboxPage from "./pages/InboxPage";
+import SettingsPage from "./pages/SettingsPage";
 
 function App() {
   return (
@@ -22,6 +23,7 @@ function App() {
           <Route path="/target-companies" element={<TargetCompaniesPage />} />
           <Route path="/followers" element={<FollowersPage />} />
           <Route path="/inbox" element={<InboxPage />} />
+          <Route path="/settings" element={<SettingsPage />} />
         </Route>
       </Routes>
     </BrowserRouter>

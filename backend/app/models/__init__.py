@@ -5,6 +5,8 @@ from app.models.target_company import TargetCompany
 from app.models.queue import OutreachQueueItem
 from app.models.upload import DataUpload
 from app.models.connection_request import ConnectionRequest
+from app.models.setting import AppSetting
+from app.models.follower_candidate import FollowerCandidate
 
 __all__ = [
     "Contact",
@@ -14,4 +16,6 @@ __all__ = [
     "OutreachQueueItem",
     "DataUpload",
     "ConnectionRequest",
+    "AppSetting",
+    "FollowerCandidate",
 ]

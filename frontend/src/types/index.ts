@@ -255,6 +255,32 @@ export interface CandidateWithNote extends FollowerCandidate {
   note: string;
 }
 
+// Persisted backlog candidate (follower_candidates table).
+export interface BacklogCandidate {
+  id: string;
+  profile_url: string;
+  name: string;
+  headline: string | null;
+  company: string | null;
+  location: string | null;
+  about: string | null;
+  segments: string[] | null;
+  note: string | null;
+  status: string; // new | noted | requested | skipped
+  scanned_at: string;
+}
+
+export interface BacklogListResponse {
+  candidates: BacklogCandidate[];
+  total: number;                    // rows matching the current status filter
+  counts: Record<string, number>;   // count per status across the whole backlog
+}
+
+export interface BacklogUpdate {
+  note?: string;
+  status?: string;
+}
+
 export interface GenerateNotesResponse {
   candidates: CandidateWithNote[];
 }
@@ -329,6 +355,19 @@ export interface NetworkOverview {
   segments: Record<string, SegmentStats>;
   top_companies: CompanyCount[];
   archetype: NetworkArchetype;
+}
+
+// ============================================================================
+// Settings Types
+// ============================================================================
+
+export interface AppSettings {
+  weekly_request_cap: number;
+  persona_name: string;
+  persona_title: string;
+  persona_location: string;
+  persona_bio: string;
+  persona_interests: string;
 }
 
 // ============================================================================

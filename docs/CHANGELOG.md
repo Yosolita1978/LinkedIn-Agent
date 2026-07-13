@@ -4,6 +4,63 @@ All notable changes to this project are documented here.
 
 ---
 
+## [0.10.0] - 2026-06-30
+
+### Outreach loop made real: Following → Connect → Backlog, Reconnect via CSV, useful dashboard
+
+Today's work reworked the product around the actual flow the user wants: scan the
+people **you follow**, connect with the non-connections using genuinely
+personalized notes, work through a large list over time, and reconnect with
+dormant conversations oldest-first. Also made the dashboard show real, actionable
+numbers and added a Settings UI for the persona that drives the notes.
+
+#### Added — DB-backed settings + persona (`/api/settings`)
+
+- **`AppSetting` model** (`backend/app/models/setting.py`) — singleton settings table (`app_settings`).
+  - `weekly_request_cap` (default 25) — drives the dashboard weekly meter.
+  - Persona columns `persona_name/title/location/bio/interests` (added via `ALTER TABLE`; NULL = fall back to `.env`).
+- **`/api/settings` routes** (`backend/app/routes/settings.py`) — `GET` (get-or-create, returns the *effective* persona = DB override or `.env` fallback) and partial `PATCH`.
+- **Note agent now reads persona per request** (`follower_connector.build_note_agent`) instead of at import, so Settings edits apply with no restart.
+- **Settings page** (`frontend/src/pages/SettingsPage.tsx`) — edit name/title/location/**bio**/interests + weekly cap; new sidebar nav item. `api/settings.ts`, `AppSettings` type.
+
+#### Added — Persistent candidate backlog (work a large Following list over time)
+
+- **`FollowerCandidate` model** (`backend/app/models/follower_candidate.py`), table `follower_candidates`, deduped by `/in/` identity key. Lifecycle: `new → noted → requested | skipped`.
+- **Scans accumulate** — `scan_followers` dedups against the backlog and upserts new people (`on_conflict_do_nothing`); re-scanning pulls the *next* batch instead of repeating. Scan stats gained `candidates_stored`.
+- **Endpoints** (`backend/app/routes/followers.py`): `GET /api/followers/candidates` (paginated, status filter, per-status counts, segmented-first then oldest-scan order) and `PATCH /api/followers/candidates/{id}` (save note → auto new→noted; or set status). `/track` now marks candidates `requested`.
+- **Backlog tab** (`frontend/src/components/BacklogTab.tsx`) on People to Convert — status filters with counts, pagination, per-card generate/edit/save note, Copy & open, Mark requested, Skip/Restore. Progress survives reloads.
+- **Dashboard** "Candidates to request" now shows the real `new` backlog count with an Open Backlog link.
+
+#### Added — LinkedIn CSV import UI (feeds the oldest-first Reconnect view)
+
+- **`ImportLinkedInData` component** (`frontend/src/components/ImportLinkedInData.tsx`) on the Reactivate page — upload `messages.csv` + `Connections.csv` (the official LinkedIn export) via the pre-existing `/api/upload/*` endpoints; auto-opens when the reconnect list is empty.
+- **`api/upload.ts`** client; `apiFetch` now sends `FormData` correctly (no forced JSON content-type).
+- Note: the Reactivate page's **"Reconnect (oldest first)"** view already existed (`sort_by=last_message&sort_order=asc`); it was just missing the data-import path.
+
+#### Added — Dashboard metrics that are actually useful
+
+- **Settable weekly-cap meter** — `requests this week / cap` with progress bar; editable inline (persists to `/api/settings`).
+- **Acceptance-rate card** + **by-segment** breakdown (overall % and per-segment from `getConnectionRequestStats`).
+- **Funnel wired to real data** — `Sent`/`Responded` from queue `by_status`; dropped the empty "Candidate" stage. Caption clarifies Sent/Responded span all outreach.
+
+#### Changed — People to Convert now targets the Following list
+
+- **Scraper points at `FOLLOWING_URL`** (`people-follow/following/`) — the people *you* follow — instead of your followers. UI renamed "Followers to Convert" → "People to Convert" throughout (sidebar, page, dashboard CTA).
+- **Resilient scraping** — `scrape_followers` anchors on profile links (`a[href*="/in/"]`) via the new `_extract_profile_links_on_page`, because the Following page uses hashed, rotating CSS classes with no stable card container. Legacy `FOLLOWER_CARD_SELECTORS` kept only for the old search-results DOM.
+- **Connect default flipped** — only a confirmed 1st-degree connection is excluded; unknown/missing connection degree is now treated as a connect candidate (was: skipped). Matches reality that the Following list is overwhelmingly non-connections; stray already-connected people are caught at send time.
+- **Commonality-based connection notes** — the note prompt now uses the full About (1,200 chars, was 300) and your persona bio/interests to open with genuine common ground; explicit guard against inventing a shared detail. Fixed reversed "follows" direction.
+
+#### Fixed
+
+- Removed a leftover test queue item ("Pedro Luraschi" / "updated test message") that was inflating the funnel's Responded count.
+
+#### Data / migrations
+
+- New tables created via `create_all`: `app_settings`, `follower_candidates`.
+- `ALTER TABLE app_settings ADD COLUMN` for the five persona fields (create_all does not alter existing tables).
+
+---
+
 ## [0.9.0] - 2026-02-12
 
 ### Remotion Showcase Video + Claude Code Skill

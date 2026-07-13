@@ -9,6 +9,9 @@ import type {
   ConnectionRequestListResponse,
   CheckAcceptancesResponse,
   ConnectionRequestStatsResponse,
+  BacklogListResponse,
+  BacklogCandidate,
+  BacklogUpdate,
 } from "../types";
 
 export async function scanFollowers(
@@ -74,4 +77,28 @@ export async function getConnectionRequestStats(): Promise<ConnectionRequestStat
   return apiFetch<ConnectionRequestStatsResponse>(
     "/api/followers/requests/stats"
   );
+}
+
+export async function fetchCandidates(
+  status?: string,
+  limit: number = 20,
+  offset: number = 0
+): Promise<BacklogListResponse> {
+  const params = new URLSearchParams();
+  if (status) params.set("status", status);
+  params.set("limit", String(limit));
+  params.set("offset", String(offset));
+  return apiFetch<BacklogListResponse>(
+    `/api/followers/candidates?${params.toString()}`
+  );
+}
+
+export async function updateCandidate(
+  id: string,
+  update: BacklogUpdate
+): Promise<BacklogCandidate> {
+  return apiFetch<BacklogCandidate>(`/api/followers/candidates/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(update),
+  });
 }
