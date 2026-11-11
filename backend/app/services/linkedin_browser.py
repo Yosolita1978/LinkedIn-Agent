@@ -18,6 +18,184 @@ USER_AGENTS = [
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
 ]
 
+# Jobs search results are a lazy-loaded list: each <li data-occludable-job-id>
+# only renders its content once scrolled into view. Bring each one into view.
+SCROLL_JOB_LIST_JS = """
+async () => {
+  const items = Array.from(document.querySelectorAll(
+    '[role="button"][componentkey^="job-card-component-ref-"], li[data-occludable-job-id]'
+  ));
+  for (const item of items) {
+    item.scrollIntoView({ block: 'center' });
+    await new Promise((resolve) => setTimeout(resolve, 150 + Math.random() * 150));
+  }
+  return items.length;
+}
+"""
+
+# Collect job cards by their durable signals, not by class names, which LinkedIn
+# rotates. Current layout (Nov 2026): div[role=button] with
+# componentkey="job-card-component-ref-<jobId>" (no /jobs/view/ links).
+# Older layouts: /jobs/view/<id> links and data-job-id. Kept as fallbacks.
+EXTRACT_JOB_CARDS_JS = """
+() => {
+  const jobs = {};
+  for (const card of document.querySelectorAll('[componentkey^="job-card-component-ref-"]')) {
+    const match = card.getAttribute('componentkey').match(/job-card-component-ref-(\\d+)/);
+    if (!match || jobs[match[1]]) continue;
+    const titleSpan = card.querySelector('span[aria-hidden="true"]');
+    jobs[match[1]] = {
+      linkedin_job_id: match[1],
+      title_text: titleSpan ? titleSpan.innerText.trim() : '',
+      card_text: (card.innerText || '').trim(),
+    };
+  }
+  for (const link of document.querySelectorAll('a[href*="/jobs/view/"]')) {
+    const match = link.href.match(/\\/jobs\\/view\\/(\\d+)/);
+    if (!match || jobs[match[1]]) continue;
+    const card = link.closest('li') || link.parentElement;
+    jobs[match[1]] = {
+      linkedin_job_id: match[1],
+      title_text: (link.getAttribute('aria-label') || link.innerText || '').trim(),
+      card_text: (card ? card.innerText : '').trim(),
+    };
+  }
+  for (const el of document.querySelectorAll('[data-job-id]')) {
+    const jobId = el.getAttribute('data-job-id');
+    if (!jobId || !/^\\d+$/.test(jobId) || jobs[jobId]) continue;
+    const card = el.closest('li') || el;
+    jobs[jobId] = { linkedin_job_id: jobId, title_text: '', card_text: (card.innerText || '').trim() };
+  }
+  return Object.values(jobs).filter((job) => job.card_text || job.title_text);
+}
+"""
+
+# Job page "People you can reach out to" / "Meet the hiring team" boxes, plus the
+# company link. Each box is bounded by the nearest ancestor that does NOT reach
+# "About the job", so links from lower sections (similar jobs, posts) are excluded.
+# A box with no person cards ("Danny and others in your network · Show all")
+# comes back as a hint.
+EXTRACT_JOB_PEOPLE_JS = """
+() => {
+  const people = [];
+  const hints = [];
+  const headings = Array.from(document.querySelectorAll('h2, h3')).filter(
+    (h) => /people you can reach out to|meet the hiring team/i.test(h.innerText || '')
+  );
+  for (const heading of headings) {
+    const source = /hiring team/i.test(heading.innerText) ? 'hiring_team' : 'reach_out';
+    let box = heading.parentElement;
+    for (let i = 0; i < 6 && box && box.parentElement; i++) {
+      if ((box.parentElement.innerText || '').includes('About the job')) break;
+      box = box.parentElement;
+    }
+    if (!box) continue;
+    const seen = new Set();
+    for (const link of box.querySelectorAll('a[href*="/in/"]')) {
+      const text = (link.innerText || '').trim();
+      const url = link.href.split('?')[0];
+      if (!text || seen.has(url)) continue;
+      seen.add(url);
+      people.push({ source, profile_url: url, text });
+    }
+    if (!seen.size) {
+      const hint = (box.innerText || '')
+        .replace(heading.innerText, '')
+        .replace(/show all/i, '')
+        .trim();
+      if (hint) hints.push({ source, text: hint });
+    }
+  }
+  const companyLink = document.querySelector('a[href*="/company/"]');
+  return { people, hints, company_url: companyLink ? companyLink.href : '' };
+}
+"""
+
+# Company People page: person cards are /in/ links whose text has a degree
+# ("Rachel Peridot Katz · 2nd / People & Talent @Crux"). The mutual-connection
+# line sits in a parent; walk up only while the container holds this one person.
+EXTRACT_COMPANY_PEOPLE_JS = """
+() => {
+  const out = [];
+  const seen = new Set();
+  const profileUrl = (a) => a.href.split('?')[0];
+  for (const link of document.querySelectorAll('a[href*="/in/"]')) {
+    const text = (link.innerText || '').trim();
+    if (!/[·•]\\s*(1st|2nd|3rd)/.test(text)) continue;
+    const url = profileUrl(link);
+    if (seen.has(url)) continue;
+    seen.add(url);
+    let card = link;
+    while (card.parentElement) {
+      const parent = card.parentElement;
+      const urls = new Set(Array.from(parent.querySelectorAll('a[href*="/in/"]')).map(profileUrl));
+      if (urls.size > 1) break;
+      card = parent;
+    }
+    out.push({ profile_url: url, text, card_text: (card.innerText || '').trim() });
+  }
+  return out;
+}
+"""
+
+# Post cards on /search/results/content/. Current layout (Nov 2026):
+# div[role=listitem] with componentkey="update-card-focus<hash>FeedType_...",
+# no post permalinks in the DOM. Older layouts kept as fallbacks.
+POST_CARD_SELECTOR = (
+    '[componentkey^="update-card-focus"], '
+    '[data-urn^="urn:li:activity:"], div.feed-shared-update-v2'
+)
+
+# Bring the last card into view so LinkedIn loads the next batch. Returns the card count.
+SCROLL_POST_LIST_JS = """
+async (selector) => {
+  const cards = document.querySelectorAll(selector);
+  if (cards.length) cards[cards.length - 1].scrollIntoView({ block: 'end' });
+  window.scrollBy(0, 600);
+  await new Promise((resolve) => setTimeout(resolve, 1500 + Math.random() * 1000));
+  return document.querySelectorAll(selector).length;
+}
+"""
+
+# Click each clamped "… more" so the full post text is in the DOM.
+EXPAND_POSTS_JS = """
+async (selector) => {
+  for (const card of document.querySelectorAll(selector)) {
+    const button = card.querySelector('[data-testid="expandable-text-button"]');
+    if (button && /more/i.test(button.innerText || '')) {
+      button.click();
+      await new Promise((resolve) => setTimeout(resolve, 100 + Math.random() * 150));
+    }
+  }
+}
+"""
+
+EXTRACT_POST_CARDS_JS = """
+(selector) => {
+  const posts = [];
+  for (const card of document.querySelectorAll(selector)) {
+    // A person's post links to /in/; a company or school page post links to /company/ etc.
+    let authorLinks = Array.from(card.querySelectorAll('a[href*="/in/"]'));
+    if (!authorLinks.length) {
+      authorLinks = Array.from(card.querySelectorAll(
+        'a[href*="/company/"], a[href*="/school/"], a[href*="/showcase/"]'
+      ));
+    }
+    const namedLink = authorLinks.find((a) => (a.innerText || '').trim());
+    const textBox = card.querySelector('[data-testid="expandable-text-box"]');
+    const jobLink = card.querySelector('a[href*="/jobs/view/"]');
+    posts.push({
+      author_url: authorLinks.length ? authorLinks[0].href.split('?')[0] : '',
+      author_link_text: namedLink ? namedLink.innerText.trim() : '',
+      post_text: textBox ? textBox.innerText.trim() : '',
+      job_url: jobLink ? jobLink.href : '',
+      card_text: (card.innerText || '').trim(),
+    });
+  }
+  return posts.filter((post) => post.card_text);
+}
+"""
+
 
 async def random_delay(min_seconds: float = 0.5, max_seconds: float = 2.0) -> None:
     """Add a random delay to simulate human behavior."""
@@ -964,6 +1142,236 @@ class LinkedInBrowser:
             await self.save_debug_snapshot("connect_error")
             result["error"] = str(e)
             return result
+
+    JOBS_PAGE_SIZE = 25  # LinkedIn shows 25 jobs per search results page
+    JOB_RESULTS_SELECTOR = (
+        '[componentkey^="job-card-component-ref-"], '
+        'a[href*="/jobs/view/"], [data-job-id], li[data-occludable-job-id]'
+    )
+
+    async def search_jobs(self, search_url: str, max_items: int = 25) -> list[dict]:
+        """
+        Scrape job cards from a LinkedIn Jobs search URL, following pagination.
+
+        Args:
+            search_url: A https://www.linkedin.com/jobs/search/?... URL
+            max_items: Maximum number of jobs to collect
+
+        Returns list of dicts with: linkedin_job_id, title_text, card_text.
+        Parsing the card text into title/company/location is left to the caller.
+        """
+        logger.info(f"Starting jobs search (max {max_items}): {search_url}")
+        jobs_by_id: dict[str, dict] = {}
+        page_start = 0
+
+        while len(jobs_by_id) < max_items:
+            await self._navigate_with_delay(f"{search_url}&start={page_start}")
+
+            try:
+                await self._page.wait_for_selector(self.JOB_RESULTS_SELECTOR, timeout=10000)
+            except PlaywrightTimeout:
+                page_text = await self._page.inner_text("body")
+                if jobs_by_id or "No matching jobs" in page_text:
+                    break  # no more pages, or the search simply has no results
+                await self.save_debug_snapshot("jobs_search")
+                raise ScrapingError(
+                    "Could not find any job results — the Jobs page structure may "
+                    "have changed. A debug snapshot was saved to playwright-data/."
+                )
+
+            await self._page.evaluate(SCROLL_JOB_LIST_JS)
+            await random_delay(1.0, 2.0)
+
+            found_on_page = 0
+            for job in await self._page.evaluate(EXTRACT_JOB_CARDS_JS):
+                if len(jobs_by_id) >= max_items:
+                    break
+                if job["linkedin_job_id"] not in jobs_by_id:
+                    jobs_by_id[job["linkedin_job_id"]] = job
+                    found_on_page += 1
+
+            logger.debug(f"Jobs page start={page_start}: {found_on_page} new (total {len(jobs_by_id)})")
+            if found_on_page == 0:
+                break  # past the last page of results
+
+            page_start += self.JOBS_PAGE_SIZE
+            await random_delay(2.0, 4.0)
+
+        logger.info(f"Collected {len(jobs_by_id)} jobs")
+        return list(jobs_by_id.values())
+
+    MAX_POST_SCROLLS = 10
+
+    async def search_posts(self, search_url: str, max_items: int = 20) -> list[dict]:
+        """
+        Scrape post cards from a LinkedIn content search URL, scrolling to load more.
+
+        Args:
+            search_url: A https://www.linkedin.com/search/results/content/?... URL
+            max_items: Maximum number of posts to collect
+
+        Returns list of dicts with: author_url, author_link_text, post_text, job_url, card_text.
+        Parsing the card text is left to the caller.
+        """
+        logger.info(f"Starting posts search (max {max_items}): {search_url}")
+        await self._navigate_with_delay(search_url)
+
+        try:
+            await self._page.wait_for_selector(POST_CARD_SELECTOR, timeout=12000)
+        except PlaywrightTimeout:
+            page_text = await self._page.inner_text("body")
+            if "No results found" in page_text:
+                return []
+            await self.save_debug_snapshot("posts_search")
+            raise ScrapingError(
+                "Could not find any post results — the search page structure may "
+                "have changed. A debug snapshot was saved to playwright-data/."
+            )
+
+        # Scroll until we have enough cards or two scrolls in a row add nothing.
+        previous_count = 0
+        stalled_scrolls = 0
+        for _ in range(self.MAX_POST_SCROLLS):
+            count = await self._page.evaluate(SCROLL_POST_LIST_JS, POST_CARD_SELECTOR)
+            if count >= max_items:
+                break
+            stalled_scrolls = stalled_scrolls + 1 if count == previous_count else 0
+            if stalled_scrolls >= 2:
+                break
+            previous_count = count
+
+        await self._page.evaluate(EXPAND_POSTS_JS, POST_CARD_SELECTOR)
+        await random_delay(0.5, 1.0)
+
+        posts = await self._page.evaluate(EXTRACT_POST_CARDS_JS, POST_CARD_SELECTOR)
+        logger.info(f"Collected {min(len(posts), max_items)} posts")
+        await random_delay(1.5, 3.0)
+        return posts[:max_items]
+
+    # Fallback selectors for the job description block on /jobs/view/<id>/.
+    # The first two match the current layout (Nov 2026); the rest are older layouts.
+    JOB_DESCRIPTION_SELECTORS = [
+        '[id^="JobDetails_AboutTheJob_"]',
+        '[data-testid="expandable-text-box"]',
+        "#job-details",
+        "div.jobs-description__content",
+        "div.jobs-box__html-content",
+        "article.jobs-description__container",
+        "div.description__text",
+    ]
+
+    async def scrape_job_details(self, job_url: str) -> dict:
+        """
+        Open a job posting and read its full description.
+
+        Returns dict with:
+            description (str)
+            is_closed (bool)
+            company (str, "" if unknown): from the page title "Job Title | Company | LinkedIn"
+            top_card (str, "" if unknown): the line under the title, e.g.
+                "United States · $181K/yr - $245K/yr · Remote · Full-time"
+            people (list[dict]): {source, profile_url, text} from the
+                "People you can reach out to" / "Meet the hiring team" boxes
+            people_hints (list[dict]): {source, text} for boxes with no names
+            company_url (str, "" if unknown): the company's LinkedIn page
+        Raises ScrapingError if no description block is found.
+        """
+        await self._navigate_with_delay(job_url)
+
+        try:
+            await self._page.wait_for_selector(
+                ", ".join(self.JOB_DESCRIPTION_SELECTORS), timeout=10000
+            )
+        except PlaywrightTimeout:
+            await self.save_debug_snapshot("job_details")
+            raise ScrapingError(
+                "Could not find the job description — the job page structure may "
+                "have changed. A debug snapshot was saved to playwright-data/."
+            )
+
+        # Expand a clamped "... more" description before reading it.
+        more_button = await self._page.query_selector('[data-testid="expandable-text-button"]')
+        if more_button:
+            try:
+                await more_button.click(timeout=3000)
+                await random_delay(0.3, 0.8)
+            except PlaywrightTimeout:
+                logger.debug("Could not click the description 'more' button; reading as is")
+
+        description = ""
+        for selector in self.JOB_DESCRIPTION_SELECTORS:
+            element = await self._page.query_selector(selector)
+            if element:
+                description = (await element.inner_text()).strip()
+                if description:
+                    break
+
+        if not description:
+            await self.save_debug_snapshot("job_details_empty")
+            raise ScrapingError("The job description block was found but is empty.")
+
+        page_text = await self._page.inner_text("body")
+        is_closed = "No longer accepting applications" in page_text
+
+        title_parts = [part.strip() for part in (await self._page.title()).split(" | ")]
+        job_title = title_parts[0] if title_parts else ""
+        company = title_parts[1] if len(title_parts) >= 3 else ""
+
+        # The lines right under the job title, up to the Apply/Save buttons.
+        top_card_lines: list[str] = []
+        page_lines = [line.strip() for line in page_text.split("\n") if line.strip()]
+        if job_title in page_lines:
+            start = page_lines.index(job_title) + 1
+            for line in page_lines[start:start + 15]:
+                if line in ("Apply", "Easy Apply", "Save"):
+                    break
+                if line != "·":
+                    top_card_lines.append(line)
+
+        people_box = await self._page.evaluate(EXTRACT_JOB_PEOPLE_JS)
+
+        await random_delay(1.5, 3.0)
+        return {
+            "description": description,
+            "is_closed": is_closed,
+            "company": company,
+            "top_card": " · ".join(top_card_lines),
+            "people": people_box["people"],
+            "people_hints": people_box["hints"],
+            "company_url": people_box["company_url"],
+        }
+
+    MAX_COMPANY_PEOPLE_SCROLLS = 4
+
+    async def search_company_people(self, people_url: str) -> list[dict]:
+        """
+        Read person cards from a company's People page
+        (https://www.linkedin.com/company/<slug>/people/).
+
+        Returns list of dicts with: profile_url, text ("Name · 2nd / headline"),
+        card_text (includes the mutual-connection line when shown).
+        The caller filters by degree.
+        """
+        logger.info(f"Reading company people: {people_url}")
+        await self._navigate_with_delay(people_url)
+
+        try:
+            await self._page.wait_for_selector('a[href*="/in/"]', timeout=12000)
+        except PlaywrightTimeout:
+            await self.save_debug_snapshot("company_people")
+            raise ScrapingError(
+                "Could not find any people on the company page — the page structure "
+                "may have changed. A debug snapshot was saved to playwright-data/."
+            )
+
+        for _ in range(self.MAX_COMPANY_PEOPLE_SCROLLS):
+            await self._page.mouse.wheel(0, 1800)
+            await random_delay(1.2, 2.2)
+
+        people = await self._page.evaluate(EXTRACT_COMPANY_PEOPLE_JS)
+        logger.info(f"Collected {len(people)} people from the company page")
+        await random_delay(1.0, 2.0)
+        return people
 
     async def save_debug_snapshot(self, name: str) -> Path:
         """

@@ -43,3 +43,10 @@ backend/playwright-data/
 
 # Logs
 *.log
+
+# Private LinkedIn content: voice guide, ideas, calendar, drafts, posts
+content/
+
+# Private career facts read by the /career skill (copy profile.example.md)
+.claude/skills/career/profile.local.md
+*.local.md

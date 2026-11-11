@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import get_settings
 from app.database import init_db
-from app.routes import upload_router, contacts_router, target_companies_router, resurrection_router, generate_router, queue_router, ranking_router, followers_router, analytics_router, auth_router, inbox_router, settings_router
+from app.routes import upload_router, contacts_router, target_companies_router, resurrection_router, generate_router, queue_router, ranking_router, followers_router, analytics_router, auth_router, inbox_router, settings_router, jobs_router, posts_router, follow_ups_router
 
 # Import models so SQLAlchemy knows about them before creating tables
 from app.models import (
@@ -18,6 +18,10 @@ from app.models import (
     ConnectionRequest,
     AppSetting,
     FollowerCandidate,
+    JobOpportunity,
+    HiringPost,
+    JobPerson,
+    FollowUp,
 )
 
 settings = get_settings()
@@ -60,6 +64,9 @@ app.include_router(analytics_router)
 app.include_router(auth_router)
 app.include_router(inbox_router)
 app.include_router(settings_router)
+app.include_router(jobs_router)
+app.include_router(posts_router)
+app.include_router(follow_ups_router)
 
 
 @app.get("/")

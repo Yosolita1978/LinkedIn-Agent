@@ -12,6 +12,41 @@ Built around three audiences:
 - **Cascadia AI** — AI/ML professionals in the Pacific Northwest
 - **Job Search** — Strategic networking with people at target companies
 
+## Career Agent (chat in Claude Code)
+
+[![Career Agent Map: watch the 10-second demo](docs/media/career-agent-demo.jpg)](docs/media/career-agent-demo.mp4)
+
+*Click the image to play the demo video.*
+
+The backend doubles as a toolbox for a chat-driven career agent. You talk to it in the
+Claude Code terminal with the `/career` skill, and it calls the local API to search
+LinkedIn Jobs and "we're hiring" posts, judge each lead against your fit rules, find
+who you can reach at the company, and draft notes in your voice.
+
+**AI finds opportunities. You make the connections.** Nothing runs on its own: every run
+starts with a message from you, browser runs only read LinkedIn, and anything that sends
+needs your explicit "yes".
+
+```
+You (terminal)  →  /career skill (Claude Code)  →  FastAPI toolbox  →  Playwright (reads LinkedIn)
+                                                                   →  Supabase (contacts, jobs, posts, people)
+```
+
+What it can do:
+
+- **Find jobs**: search LinkedIn Jobs, save the postings, fetch the full text for the
+  promising ones, and give each a **skip / review / apply** verdict that quotes the posting line behind it.
+- **Find hiring posts**: search posts like "AI enablement hiring", label the author
+  (hiring manager, company recruiter, agency, or not a job) and judge the role.
+- **Find people at the company**: save LinkedIn's "People you can reach out to" from the job page,
+  and scan the company's People page for your 1st and 2nd-degree connections with their mutual-connection line.
+- **Draft outreach**: connection notes and follow-ups in your voice (from a local, gitignored
+  `content/voice.md` style guide). You send them yourself.
+
+Setup: copy `.claude/skills/career/profile.example.md` to `profile.local.md` and fill in your
+facts (location, work authorization, years, cities, pay floor). That file is gitignored.
+Then run the backend and type `/career find AI enablement jobs, remote` in Claude Code.
+
 ## How It Works
 
 The primary funnel — **followers → connection → conversation**:
@@ -271,7 +306,7 @@ APP_ENV=development
 
 ## API Reference
 
-The backend exposes 8 routers with 30+ endpoints. Full interactive docs available at `http://localhost:8000/docs` when running.
+The backend exposes 13 routers with 40+ endpoints. Full interactive docs available at `http://localhost:8000/docs` when running.
 
 | Router | Prefix | Purpose |
 |--------|--------|---------|
@@ -283,6 +318,11 @@ The backend exposes 8 routers with 30+ endpoints. Full interactive docs availabl
 | Queue | `/api/queue/` | Outreach pipeline (incl. per-message regenerate) |
 | Ranking | `/api/ranking/` | Daily outreach recommendations |
 | Followers | `/api/followers/` | Scan followers, send requests, accept→conversation bridge |
+| Inbox | `/api/inbox/` | Sync conversations (Playwright), who needs a reply |
+| Jobs | `/api/jobs/` | Search LinkedIn Jobs, fetch posting text, people at the company (`/{id}/people/scan`) |
+| Posts | `/api/posts/` | Search "we're hiring" posts, track authors as leads |
+| Settings | `/api/settings/` | Persona and weekly connection cap |
+| Analytics / Auth | `/api/analytics/`, `/api/auth/` | Funnel numbers, LinkedIn session check |
 
 ## Project Structure
 
@@ -304,6 +344,9 @@ linkedin-outreach-agent/
 │   │   │   ├── ranking_service.py
 │   │   │   ├── queue_service.py
 │   │   │   ├── follower_connector.py    # follower scan + accept→conversation bridge
+│   │   │   ├── job_search.py            # Jobs search, posting text, people scan
+│   │   │   ├── post_search.py           # "we're hiring" posts search
+│   │   │   ├── job_people.py            # people linked to a job (hiring team, 2nd-degree)
 │   │   │   ├── linkedin_voyager.py      # Voyager API (degree, profile enrichment)
 │   │   │   └── linkedin_browser.py      # Playwright automation
 │   │   └── schemas/             # Pydantic validation
@@ -322,8 +365,13 @@ linkedin-outreach-agent/
 │   │   └── scenes/                  # 6 animated scenes (Intro → Outro)
 │   └── package.json                 # Remotion v4
 ├── .claude/
-│   └── skills/render-video/         # /render-video Claude Code skill
+│   └── skills/
+│       ├── career/                  # /career agent skill (+ profile.example.md)
+│       ├── post/, humanize/         # LinkedIn post drafting skills
+│       └── render-video/            # /render-video Claude Code skill
+├── content/                     # voice guide, post samples, drafts (private, gitignored)
 └── docs/
+    ├── media/                   # career agent demo video
     ├── ARCHITECTURE.md          # System design
     ├── PROGRESS.md              # Build progress
     ├── DECISIONS.md             # Architecture decisions
@@ -339,6 +387,3 @@ linkedin-outreach-agent/
 - [Changelog](docs/CHANGELOG.md) — Version history
 - [Scraping Series](docs/scraping-series/) — 7-part tutorial on LinkedIn scraping with Playwright
 
-## License
-
-Private project. Not for distribution.

@@ -66,6 +66,35 @@ same person being double-queued.
     ADD CONSTRAINT uq_outreach_contact_purpose UNIQUE (contact_id, purpose);
   ```
 
+### Job posting text columns
+
+`job_opportunities` stores the full posting text for jobs you look at closely.
+
+- **Fresh database, or `job_opportunities` doesn't exist yet:** created automatically.
+- **Table already created by an earlier version of the jobs feature:** run once in the
+  Supabase SQL editor:
+
+  ```sql
+  ALTER TABLE job_opportunities
+    ADD COLUMN IF NOT EXISTS description TEXT,
+    ADD COLUMN IF NOT EXISTS details_fetched_at TIMESTAMP;
+  ```
+
+`hiring_posts` (posts search) and `job_people` (people linked to a job) are new tables,
+so they're created automatically when the backend starts. No SQL needed.
+
+### Career agent profile (for the `/career` skill)
+
+The `/career` skill judges jobs against your personal facts, kept out of git:
+
+```bash
+cp .claude/skills/career/profile.example.md .claude/skills/career/profile.local.md
+# then edit profile.local.md: location, work authorization, years, cities, pay floor
+```
+
+`profile.local.md` is gitignored. With the backend running, type
+`/career are you connected?` in Claude Code to check the setup.
+
 ---
 
 ## 2. LinkedIn session (one-time, required for follower scanning)

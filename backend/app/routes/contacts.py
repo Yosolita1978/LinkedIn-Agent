@@ -53,6 +53,7 @@ async def list_contacts(
                 Contact.name.ilike(search_pattern),
                 Contact.company.ilike(search_pattern),
                 Contact.headline.ilike(search_pattern),
+                Contact.position.ilike(search_pattern),
             )
         )
 
