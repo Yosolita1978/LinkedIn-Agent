@@ -14,9 +14,7 @@ Built around three audiences:
 
 ## Career Agent (chat in Claude Code)
 
-[![Career Agent Map: watch the 10-second demo](docs/media/career-agent-demo.jpg)](docs/media/career-agent-demo.mp4)
-
-*Click the image to play the demo video.*
+https://github.com/user-attachments/assets/758c0252-446c-4166-977f-b30a3742de13
 
 The backend doubles as a toolbox for a chat-driven career agent. You talk to it in the
 Claude Code terminal with the `/career` skill, and it calls the local API to search
